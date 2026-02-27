@@ -17,7 +17,7 @@ from app.bot.keyboards.menus import (
     request_list_inline,
     request_view_inline,
 )
-from app.bot.keyboards.request_actions import request_actions_keyboard
+from app.bot.keyboards.request_actions import request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
@@ -36,8 +36,9 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     def _is_admin(uid: int) -> bool:
         return uid in admin_ids
 
-    def _menu(uid: int):
-        return private_main_menu_inline(is_admin=_is_admin(uid))
+    async def _menu(uid: int):
+        role = await _role(uid)
+        return private_main_menu_inline(role=role, is_admin=_is_admin(uid))
 
     async def _role(user_id: int) -> Role | None:
         return await ctx.roles.get_global_role(user_id)
@@ -216,11 +217,11 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             publisher=publisher,
             chat_id=target_chat_id,
             request=req,
-            reply_markup=request_actions_keyboard(req, role or Role.FOREMAN),
+            reply_markup=request_actions_keyboard_group(req),
         )
         await message.answer(
             f"Заявка создана: {req['request_code']}",
-            reply_markup=_menu(message.from_user.id),
+            reply_markup=await _menu(message.from_user.id),
         )
 
     # ── Lists (active / archive) — paginated buttons ───────────────────
@@ -228,29 +229,111 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     _EDITABLE_STAGES = {StageCode.CREATED.value, StageCode.PDO_PROCESSING.value}
 
     async def _send_request_page(message: Message, user_id: int, archived: bool, page: int) -> None:
+        """List for foreman: my requests across all objects."""
         lt = "r" if archived else "a"
         items, total = await ctx.requests.list_requests_by_foreman(
             user_id, archived=archived, limit=PAGE_SIZE, offset=page * PAGE_SIZE,
         )
         if not items:
             label = "Архив пуст" if archived else "Активных заявок нет"
-            await message.answer(label, reply_markup=_menu(user_id))
+            await message.answer(label, reply_markup=await _menu(user_id))
             return
         await message.answer(
             "Архив заявок:" if archived else "Активные заявки:",
             reply_markup=request_list_inline(items, page, total, lt),
         )
 
+    async def _send_request_page_by_chat(
+        message: Message, chat_id: int, user_id: int, archived: bool, page: int,
+    ) -> None:
+        """List by object (for PDO, procurement, manager, viewer)."""
+        lt = "r" if archived else "a"
+        items, total = await ctx.requests.list_requests_paginated(
+            chat_id, archived=archived, limit=PAGE_SIZE, offset=page * PAGE_SIZE,
+        )
+        if not items:
+            label = "Архив пуст" if archived else "Активных заявок нет"
+            await message.answer(label, reply_markup=await _menu(user_id))
+            return
+        await message.answer(
+            "Архив заявок:" if archived else "Активные заявки:",
+            reply_markup=request_list_inline(items, page, total, lt, chat_id=chat_id),
+        )
+
     @router.callback_query(F.data == "pm:active")
     async def list_active(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        await _send_request_page(call.message, call.from_user.id, archived=False, page=0)
+        role = await _role(call.from_user.id)
+        if role == Role.FOREMAN:
+            await _send_request_page(call.message, call.from_user.id, archived=False, page=0)
+            await call.answer()
+            return
+        chats = await ctx.roles.list_chats()
+        if not chats:
+            await call.message.answer("Нет объектов.", reply_markup=await _menu(call.from_user.id))
+            await call.answer()
+            return
+        if len(chats) == 1:
+            await _send_request_page_by_chat(
+                call.message, chats[0]["id"], call.from_user.id, archived=False, page=0,
+            )
+            await call.answer()
+            return
+        await state.set_state(GroupMenuStates.waiting_object_for_active)
+        await call.message.answer(
+            "Выберите объект:",
+            reply_markup=object_picker_inline(chats, "pick_obj_active"),
+        )
         await call.answer()
 
     @router.callback_query(F.data == "pm:archive")
     async def list_archive(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        await _send_request_page(call.message, call.from_user.id, archived=True, page=0)
+        role = await _role(call.from_user.id)
+        if role == Role.FOREMAN:
+            await _send_request_page(call.message, call.from_user.id, archived=True, page=0)
+            await call.answer()
+            return
+        chats = await ctx.roles.list_chats()
+        if not chats:
+            await call.message.answer("Нет объектов.", reply_markup=await _menu(call.from_user.id))
+            await call.answer()
+            return
+        if len(chats) == 1:
+            await _send_request_page_by_chat(
+                call.message, chats[0]["id"], call.from_user.id, archived=True, page=0,
+            )
+            await call.answer()
+            return
+        await state.set_state(GroupMenuStates.waiting_object_for_archive)
+        await call.message.answer(
+            "Выберите объект:",
+            reply_markup=object_picker_inline(chats, "pick_obj_archive"),
+        )
+        await call.answer()
+
+    @router.callback_query(
+        GroupMenuStates.waiting_object_for_active,
+        F.data.startswith("pick_obj_active:"),
+    )
+    async def pick_obj_active(call: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
+        chat_id = int(call.data.split(":", maxsplit=1)[1])
+        await _send_request_page_by_chat(
+            call.message, chat_id, call.from_user.id, archived=False, page=0,
+        )
+        await call.answer()
+
+    @router.callback_query(
+        GroupMenuStates.waiting_object_for_archive,
+        F.data.startswith("pick_obj_archive:"),
+    )
+    async def pick_obj_archive(call: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
+        chat_id = int(call.data.split(":", maxsplit=1)[1])
+        await _send_request_page_by_chat(
+            call.message, chat_id, call.from_user.id, archived=True, page=0,
+        )
         await call.answer()
 
     @router.callback_query(F.data.startswith("rlist:"))
@@ -258,13 +341,19 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await state.clear()
         parts = call.data.split(":")
         lt, page = parts[1], int(parts[2])
-        await _send_request_page(call.message, call.from_user.id, archived=(lt == "r"), page=page)
+        chat_id = int(parts[3]) if len(parts) > 3 else None
+        if chat_id is not None:
+            await _send_request_page_by_chat(
+                call.message, chat_id, call.from_user.id, archived=(lt == "r"), page=page,
+            )
+        else:
+            await _send_request_page(call.message, call.from_user.id, archived=(lt == "r"), page=page)
         await call.answer()
 
     @router.callback_query(F.data == "back_to_menu")
     async def back_to_menu(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        await call.message.answer("Главное меню", reply_markup=_menu(call.from_user.id))
+        await call.message.answer("Главное меню", reply_markup=await _menu(call.from_user.id))
         await call.answer()
 
     @router.callback_query(F.data == "noop")
@@ -273,10 +362,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     # ── View single request card ──────────────────────────────────────
 
-    async def _show_request_card(message: Message, code: str, user_id: int, lt: str, page: int) -> None:
+    async def _show_request_card(
+        message: Message, code: str, user_id: int, lt: str, page: int, chat_id: int | None = None,
+    ) -> None:
         request = await ctx.requests.get_request_by_code_global(code)
         if not request:
-            await message.answer("Заявка не найдена", reply_markup=_menu(user_id))
+            await message.answer("Заявка не найдена", reply_markup=await _menu(user_id))
             return
         from app.bot.formatters.request_card import render_request_card
         events = await ctx.requests.get_events(request["id"])
@@ -291,14 +382,19 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             request.get("foreman_user_id") == user_id
             and request.get("stage_code") in _EDITABLE_STAGES
         )
-        await message.answer(text, reply_markup=request_view_inline(request, can_edit, lt, page))
+        await message.answer(
+            text, reply_markup=request_view_inline(request, can_edit, lt, page, chat_id=chat_id),
+        )
 
     @router.callback_query(F.data.startswith("vreq:"))
     async def view_request(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
         parts = call.data.split(":")
         lt, page, code = parts[1], int(parts[2]), parts[3]
-        await _show_request_card(call.message, code, call.from_user.id, lt, page)
+        chat_id = int(parts[4]) if len(parts) > 4 else None
+        await _show_request_card(
+            call.message, code, call.from_user.id, lt, page, chat_id=chat_id,
+        )
         await call.answer()
 
     # ── Edit foreman fields ───────────────────────────────────────────
@@ -342,20 +438,20 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
         request = await ctx.requests.get_request_by_code_global(code)
         if not request or request.get("stage_code") not in _EDITABLE_STAGES:
-            await message.answer("Редактирование больше недоступно", reply_markup=_menu(message.from_user.id))
+            await message.answer("Редактирование больше недоступно", reply_markup=await _menu(message.from_user.id))
             return
 
         updated = await ctx.requests.update_foreman_fields(request["id"], {db_field: value})
         if not updated:
-            await message.answer("Ошибка обновления", reply_markup=_menu(message.from_user.id))
+            await message.answer("Ошибка обновления", reply_markup=await _menu(message.from_user.id))
             return
 
         role = await _role(message.from_user.id)
         await publish_request_event(
             ctx=ctx, publisher=publisher, chat_id=updated["chat_id"],
-            request=updated, reply_markup=request_actions_keyboard(updated, role or Role.FOREMAN),
+            request=updated, reply_markup=request_actions_keyboard_group(updated),
         )
-        await message.answer(f"Заявка {code} обновлена", reply_markup=_menu(message.from_user.id))
+        await message.answer(f"Заявка {code} обновлена", reply_markup=await _menu(message.from_user.id))
 
     @router.message(ForemanEditStates.waiting_edit_description, F.chat.type == "private")
     async def edit_description_input(message: Message, state: FSMContext) -> None:
@@ -403,9 +499,9 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             for i in items:
                 all_items.append(f"{i['request_code']} | {i.get('nomenclature_1c') or i.get('name_from_foreman') or '-'}")
         if not all_items:
-            await message.answer("Ничего не найдено", reply_markup=_menu(message.from_user.id))
+            await message.answer("Ничего не найдено", reply_markup=await _menu(message.from_user.id))
             return
-        await message.answer("\n".join(all_items), reply_markup=_menu(message.from_user.id))
+        await message.answer("\n".join(all_items), reply_markup=await _menu(message.from_user.id))
 
     @router.callback_query(F.data == "pm:history")
     async def history_button(call: CallbackQuery, state: FSMContext) -> None:
@@ -423,15 +519,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             if request:
                 events = await ctx.requests.get_events_with_attachment_counts(request["id"])
                 if not events:
-                    await message.answer("История пока пустая", reply_markup=_menu(message.from_user.id))
+                    await message.answer("История пока пустая", reply_markup=await _menu(message.from_user.id))
                     return
                 lines = [f"История {code}:"]
                 for e in events:
                     created = str(e.get("created_at") or "-")
                     lines.append(f"- {created} | {e['event_type']} | вложений: {e.get('attachments_count', 0)}")
-                await message.answer("\n".join(lines), reply_markup=_menu(message.from_user.id))
+                await message.answer("\n".join(lines), reply_markup=await _menu(message.from_user.id))
                 return
-        await message.answer("Заявка не найдена", reply_markup=_menu(message.from_user.id))
+        await message.answer("Заявка не найдена", reply_markup=await _menu(message.from_user.id))
 
     # ── Received partial / full (group card callbacks → DM) ───────────
 
@@ -474,14 +570,14 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         await state.clear()
         if not req:
-            await message.answer("Заявка не найдена", reply_markup=_menu(message.from_user.id))
+            await message.answer("Заявка не найдена", reply_markup=await _menu(message.from_user.id))
             return
         role = await _role(message.from_user.id)
         await publish_request_event(
             ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-            request=req, reply_markup=request_actions_keyboard(req, role or Role.FOREMAN),
+            request=req, reply_markup=request_actions_keyboard_group(req),
         )
-        await message.answer("Получение (частично) зафиксировано", reply_markup=_menu(message.from_user.id))
+        await message.answer("Получение (частично) зафиксировано", reply_markup=await _menu(message.from_user.id))
 
     @router.callback_query(F.data.startswith("received_full:"))
     async def received_full_click(call: CallbackQuery) -> None:

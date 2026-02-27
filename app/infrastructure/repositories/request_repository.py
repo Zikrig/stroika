@@ -132,6 +132,30 @@ class RequestRepository:
         finally:
             await conn.close()
 
+    async def list_requests_paginated(
+        self, chat_id: int, archived: bool = False, *, limit: int = 50, offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return (page_items, total_count) for a chat (object)."""
+        closed = [StatusCode.CLOSED.value, StatusCode.CANCELLED.value, StatusCode.TERMINATED.value]
+        conn = await self.db.connect()
+        try:
+            base = "FROM requests WHERE chat_id=?"
+            params: list[Any] = [chat_id]
+            if archived:
+                base += " AND status_code IN (?, ?, ?)"
+            else:
+                base += " AND status_code NOT IN (?, ?, ?)"
+            params.extend(closed)
+            cnt_cur = await conn.execute(f"SELECT COUNT(*) AS cnt {base}", tuple(params))
+            total = (await cnt_cur.fetchone())["cnt"]
+            sql = f"SELECT * {base} ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cur = await conn.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows], total
+        finally:
+            await conn.close()
+
     async def list_requests_by_foreman(
         self, foreman_user_id: int, archived: bool = False, *, limit: int = 50, offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:

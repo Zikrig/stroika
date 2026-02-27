@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from app.application.context import AppContext
 from app.application.use_cases import manager_actions, pause_resume_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
-from app.bot.keyboards.request_actions import request_actions_keyboard
+from app.bot.keyboards.request_actions import request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
@@ -20,11 +20,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     router = Router(name="manager")
     admin_ids = set(get_settings().admin_id_list)
 
-    def _menu(uid: int):
-        return private_main_menu_inline(is_admin=uid in admin_ids)
-
     async def _role(user_id: int) -> Role | None:
         return await ctx.roles.get_global_role(user_id)
+
+    async def _menu(uid: int):
+        role = await _role(uid)
+        return private_main_menu_inline(role=role, is_admin=uid in admin_ids)
 
     # ── helper: redirect FSM to DM ───────────────────────────────────
 
@@ -69,10 +70,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=request_actions_keyboard(req, Role.MANAGER),
+                request=req, reply_markup=request_actions_keyboard_group(req),
                 note=message.text or "", note_label="Комментарий руководителя",
             )
-        await message.answer("Комментарий сохранён", reply_markup=_menu(message.from_user.id))
+        await message.answer("Комментарий сохранён", reply_markup=await _menu(message.from_user.id))
 
     # ── Pause ─────────────────────────────────────────────────────────
 
@@ -101,10 +102,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=request_actions_keyboard(req, Role.MANAGER),
+                request=req, reply_markup=request_actions_keyboard_group(req),
                 note=message.text or "", note_label="Причина паузы",
             )
-        await message.answer("Пауза установлена", reply_markup=_menu(message.from_user.id))
+        await message.answer("Пауза установлена", reply_markup=await _menu(message.from_user.id))
 
     # ── Resume ────────────────────────────────────────────────────────
 
@@ -133,10 +134,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=request_actions_keyboard(req, Role.MANAGER),
+                request=req, reply_markup=request_actions_keyboard_group(req),
                 note=message.text or "", note_label="Комментарий к снятию паузы",
             )
-        await message.answer("Пауза снята", reply_markup=_menu(message.from_user.id))
+        await message.answer("Пауза снята", reply_markup=await _menu(message.from_user.id))
 
     # ── Terminate ─────────────────────────────────────────────────────
 
@@ -164,6 +165,6 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 request=req, reply_markup=None,
                 note=message.text or "", note_label="Причина прекращения",
             )
-        await message.answer("Закупка прекращена", reply_markup=_menu(message.from_user.id))
+        await message.answer("Закупка прекращена", reply_markup=await _menu(message.from_user.id))
 
     return router

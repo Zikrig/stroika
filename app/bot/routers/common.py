@@ -31,7 +31,7 @@ def get_router(ctx: AppContext) -> Router:
         role_text = "не назначена" if role is None else role_title(role)
         await message.answer(
             f"Бот учёта заявок.\nВаша роль: {role_text}",
-            reply_markup=private_main_menu_inline(is_admin=_is_admin(message.from_user.id)),
+            reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(message.from_user.id)),
         )
 
     # ── /start (group — minimal) ─────────────────────────────────────
@@ -46,7 +46,7 @@ def get_router(ctx: AppContext) -> Router:
         role_text = "не назначена" if role is None else role_title(role)
         await message.answer(
             f"Ваша роль: {role_text}",
-            reply_markup=private_main_menu_inline(is_admin=_is_admin(message.from_user.id)),
+            reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(message.from_user.id)),
         )
 
     # ── /add (group — admin registers object) ─────────────────────────
@@ -92,9 +92,10 @@ def get_router(ctx: AppContext) -> Router:
         chat_id = data["target_chat_id"]
         await ctx.roles.upsert_chat(chat_id, name)
         await state.clear()
+        role = await ctx.roles.get_global_role(message.from_user.id)
         await message.answer(
             f"Объект сохранён: «{name}» (группа {chat_id})",
-            reply_markup=private_main_menu_inline(is_admin=_is_admin(message.from_user.id)),
+            reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(message.from_user.id)),
         )
 
     # ── /set (group — admin assigns role via reply) ───────────────────
@@ -136,11 +137,12 @@ def get_router(ctx: AppContext) -> Router:
     # ── cancel_flow (universal) ───────────────────────────────────────
     @router.callback_query(F.data == "cancel_flow")
     async def cancel_flow(call: CallbackQuery, state: FSMContext) -> None:
+        role = await ctx.roles.get_global_role(call.from_user.id)
         if call.message.chat.type == "private":
             await state.clear()
             await call.message.answer(
                 "Действие отменено.",
-                reply_markup=private_main_menu_inline(is_admin=_is_admin(call.from_user.id)),
+                reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(call.from_user.id)),
             )
         else:
             p_state = private_fsm(state, call.bot.id, call.from_user.id)
@@ -149,7 +151,7 @@ def get_router(ctx: AppContext) -> Router:
                 await call.bot.send_message(
                     call.from_user.id,
                     "Действие отменено.",
-                    reply_markup=private_main_menu_inline(is_admin=_is_admin(call.from_user.id)),
+                    reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(call.from_user.id)),
                 )
             except Exception:
                 pass
@@ -169,12 +171,13 @@ def get_router(ctx: AppContext) -> Router:
         if not _is_admin(call.from_user.id):
             await call.answer("Доступ запрещён", show_alert=True)
             return
+        role = await ctx.roles.get_global_role(call.from_user.id)
         await call.message.answer(
             "Назначение роли другому пользователю:\n"
             "1) В группе ответьте на сообщение пользователя командой /set\n"
             "2) В личку придёт сообщение с кнопками ролей\n"
             "3) Нажмите нужную роль",
-            reply_markup=private_main_menu_inline(is_admin=True),
+            reply_markup=private_main_menu_inline(role=role, is_admin=True),
         )
         await call.answer()
 
@@ -206,9 +209,10 @@ def get_router(ctx: AppContext) -> Router:
         role = Role(role_raw)
         await ctx.roles.upsert_user(user_id, None, f"user_{user_id}")
         await ctx.roles.set_global_role(user_id, role)
+        my_role = await ctx.roles.get_global_role(call.from_user.id)
         await call.message.answer(
             f"Роль назначена: user_id={user_id}, role={role_title(role)}",
-            reply_markup=private_main_menu_inline(is_admin=True),
+            reply_markup=private_main_menu_inline(role=my_role, is_admin=True),
         )
         await _after_role_assigned(call, state, user_id, role)
         await call.answer("Готово")
@@ -224,7 +228,7 @@ def get_router(ctx: AppContext) -> Router:
         await ctx.roles.set_global_role(call.from_user.id, role)
         await call.message.answer(
             f"Ваша роль обновлена: {role_title(role)}",
-            reply_markup=private_main_menu_inline(is_admin=True),
+            reply_markup=private_main_menu_inline(role=role, is_admin=True),
         )
         await _after_role_assigned(call, state, call.from_user.id, role)
         await call.answer("Роль сохранена")
@@ -239,9 +243,10 @@ def get_router(ctx: AppContext) -> Router:
             return
         await ctx.roles.set_display_name(message.from_user.id, name)
         await state.clear()
+        role = await ctx.roles.get_global_role(message.from_user.id)
         await message.answer(
             f"Имя сохранено: {name}",
-            reply_markup=private_main_menu_inline(is_admin=_is_admin(message.from_user.id)),
+            reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(message.from_user.id)),
         )
 
     return router

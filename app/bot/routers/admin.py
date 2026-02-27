@@ -7,7 +7,7 @@ from app.application.context import AppContext
 from app.application.dto import CreateRequestInput
 from app.application.use_cases import cancel_request, create_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
-from app.bot.keyboards.request_actions import request_actions_keyboard
+from app.bot.keyboards.request_actions import request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
@@ -21,11 +21,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     router = Router(name="actions")
     admin_ids = set(get_settings().admin_id_list)
 
-    def _menu(uid: int):
-        return private_main_menu_inline(is_admin=uid in admin_ids)
-
     async def _role(user_id: int) -> Role | None:
         return await ctx.roles.get_global_role(user_id)
+
+    async def _menu(uid: int):
+        role = await _role(uid)
+        return private_main_menu_inline(role=role, is_admin=uid in admin_ids)
 
     # ── Cancel (group card → DM FSM) ─────────────────────────────────
 
@@ -79,7 +80,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 request=req, reply_markup=None,
                 note=message.text or "", note_label="Причина отмены",
             )
-        await message.answer("Заявка отменена", reply_markup=_menu(message.from_user.id))
+        await message.answer("Заявка отменена", reply_markup=await _menu(message.from_user.id))
 
     # ── Repeat (one-click, group card) ────────────────────────────────
 
@@ -113,7 +114,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await publish_request_event(
             ctx=ctx, publisher=publisher, chat_id=group_chat_id,
-            request=req, reply_markup=request_actions_keyboard(req, Role.FOREMAN),
+            request=req, reply_markup=request_actions_keyboard_group(req),
         )
         await call.answer("Повторная заявка создана")
 

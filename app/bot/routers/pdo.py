@@ -10,7 +10,7 @@ from app.application.use_cases import pdo_process_excel, take_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.keyboards.request_actions import request_actions_keyboard
+from app.bot.keyboards.request_actions import request_actions_keyboard_group
 from app.bot.routers._publish import publish_container_event, publish_request_event
 from app.bot.states import ActionInputStates
 from app.config import get_settings
@@ -24,11 +24,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     router = Router(name="pdo")
     admin_ids = set(get_settings().admin_id_list)
 
-    def _menu(uid: int):
-        return private_main_menu_inline(is_admin=uid in admin_ids)
-
     async def _role(user_id: int) -> Role | None:
         return await ctx.roles.get_global_role(user_id)
+
+    async def _menu(uid: int):
+        role = await _role(uid)
+        return private_main_menu_inline(role=role, is_admin=uid in admin_ids)
 
     # ── Take (one-click, group card) ──────────────────────────────────
 
@@ -51,7 +52,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=group_chat_id,
-                request=req, reply_markup=request_actions_keyboard(req, role),
+                request=req, reply_markup=request_actions_keyboard_group(req),
             )
         await call.answer("Заявка взята ПДО")
 
@@ -134,12 +135,11 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 )
 
         for item in created:
-            role_for_buttons = Role.PROCUREMENT if item["stage_code"] == "transferred_to_procurement" else Role.PDO
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=item, reply_markup=request_actions_keyboard(item, role_for_buttons),
+                request=item, reply_markup=request_actions_keyboard_group(item),
             )
-        await message.answer("Форма ПДО обработана", reply_markup=_menu(message.from_user.id))
+        await message.answer("Форма ПДО обработана", reply_markup=await _menu(message.from_user.id))
 
     @router.message(ActionInputStates.waiting_pdo_excel, F.chat.type == "private")
     async def pdo_excel_not_document(message: Message) -> None:

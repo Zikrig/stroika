@@ -1,6 +1,10 @@
 import math
+from typing import TYPE_CHECKING
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+if TYPE_CHECKING:
+    from app.domain.enums import Role
 
 PAGE_SIZE = 5
 
@@ -23,9 +27,14 @@ def new_request_description_inline() -> InlineKeyboardMarkup:
     )
 
 
-def private_main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="Новая заявка", callback_data="pm:new_request")],
+def private_main_menu_inline(
+    role: "Role | None" = None,
+    is_admin: bool = False,
+) -> InlineKeyboardMarkup:
+    from app.domain.enums import Role
+    rows: list[list[InlineKeyboardButton]] = []
+    # Активные заявки и Архив — у всех; Новая заявка — только у прораба
+    rows = [
         [
             InlineKeyboardButton(text="Активные заявки", callback_data="pm:active"),
             InlineKeyboardButton(text="Архив", callback_data="pm:archive"),
@@ -35,6 +44,8 @@ def private_main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="История заявки", callback_data="pm:history"),
         ],
     ]
+    if role == Role.FOREMAN:
+        rows.insert(0, [InlineKeyboardButton(text="Новая заявка", callback_data="pm:new_request")])
     if is_admin:
         rows.append([
             InlineKeyboardButton(text="Сменить мою роль", callback_data="admin_menu:set_my_role"),
@@ -61,8 +72,10 @@ def request_list_inline(
     page: int,
     total: int,
     list_type: str,
+    chat_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Paginated list of requests as buttons. list_type is 'a' (active) or 'r' (archive)."""
+    """Paginated list. list_type 'a'|'r'. If chat_id set, list is by object (for non-foreman)."""
+    suf = f":{chat_id}" if chat_id is not None else ""
     rows: list[list[InlineKeyboardButton]] = []
     for item in items:
         code = item.get("request_code", "?")
@@ -72,24 +85,27 @@ def request_list_inline(
         rows.append([
             InlineKeyboardButton(
                 text=f"{code} — {desc}",
-                callback_data=f"vreq:{list_type}:{page}:{code}",
+                callback_data=f"vreq:{list_type}:{page}:{code}{suf}",
             )
         ])
     nav: list[InlineKeyboardButton] = []
     total_pages = max(1, math.ceil(total / PAGE_SIZE))
     if page > 0:
-        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"rlist:{list_type}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"rlist:{list_type}:{page - 1}{suf}"))
     nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if (page + 1) * PAGE_SIZE < total:
-        nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"rlist:{list_type}:{page + 1}"))
+        nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"rlist:{list_type}:{page + 1}{suf}"))
     rows.append(nav)
     rows.append([InlineKeyboardButton(text="← Меню", callback_data="back_to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def request_view_inline(request: dict, can_edit: bool, list_type: str, page: int) -> InlineKeyboardMarkup:
+def request_view_inline(
+    request: dict, can_edit: bool, list_type: str, page: int, chat_id: int | None = None,
+) -> InlineKeyboardMarkup:
     """Buttons shown when viewing a single request card in DM."""
     code = request["request_code"]
+    suf = f":{chat_id}" if chat_id is not None else ""
     rows: list[list[InlineKeyboardButton]] = []
     if can_edit:
         rows.append([
@@ -100,7 +116,7 @@ def request_view_inline(request: dict, can_edit: bool, list_type: str, page: int
             InlineKeyboardButton(text="✏️ Подобъект", callback_data=f"ed:s:{code}"),
             InlineKeyboardButton(text="✏️ Срок", callback_data=f"ed:n:{code}"),
         ])
-    rows.append([InlineKeyboardButton(text="← К списку", callback_data=f"rlist:{list_type}:{page}")])
+    rows.append([InlineKeyboardButton(text="← К списку", callback_data=f"rlist:{list_type}:{page}{suf}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
