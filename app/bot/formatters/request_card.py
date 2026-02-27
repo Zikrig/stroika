@@ -66,12 +66,26 @@ def _latest_procurement_dates(events: list[dict] | None) -> tuple[str, str, str]
     return eta_shipping, shipped_at, eta_arrival
 
 
+def _format_foreman(request: dict, foreman_info: dict | None) -> str:
+    if not request.get("foreman_user_id"):
+        return "-"
+    uid = request["foreman_user_id"]
+    if foreman_info:
+        name = foreman_info.get("display_name") or foreman_info.get("full_name") or str(uid)
+        username = foreman_info.get("username")
+        if username:
+            return f"{name} (@{username})"
+        return f"{name} (tg://user?id={uid})"
+    return str(uid)
+
+
 def render_request_card(
     request: dict,
     events: list[dict] | None = None,
     attachments_summary: dict | None = None,
     note: str | None = None,
     note_label: str = "Комментарий",
+    foreman_info: dict | None = None,
 ) -> str:
     unit = request.get("unit") or ""
     status_code = str(request.get("status_code") or "")
@@ -80,7 +94,7 @@ def render_request_card(
 
     lines = [
         f"ID: {request.get('request_code', '-')}",
-        f"👷 Прораб: {request.get('foreman_user_id') or '-'}",
+        f"👷 Прораб: {_format_foreman(request, foreman_info)}",
         f"🏗 Объект: {request.get('object_name') or '-'}",
         f"🎯 Подобъект: {request.get('subobject_name') or '-'}",
         f"📝 Наименование от прораба: {request.get('name_from_foreman') or '-'}",

@@ -5,6 +5,10 @@ class AdminAddObjectStates(StatesGroup):
     waiting_object_name = State()
 
 
+class RoleOnboardingStates(StatesGroup):
+    waiting_foreman_name = State()
+
+
 class ForemanCreateStates(StatesGroup):
     waiting_object_selection = State()
     waiting_description = State()

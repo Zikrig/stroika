@@ -102,6 +102,26 @@ class RoleRepository:
         finally:
             await conn.close()
 
+    async def set_display_name(self, user_id: int, display_name: str) -> None:
+        conn = await self.db.connect()
+        try:
+            await conn.execute(
+                "UPDATE users SET display_name=? WHERE id=?",
+                (display_name, user_id),
+            )
+            await conn.commit()
+        finally:
+            await conn.close()
+
+    async def get_user(self, user_id: int) -> dict | None:
+        conn = await self.db.connect()
+        try:
+            cur = await conn.execute("SELECT * FROM users WHERE id=?", (user_id,))
+            row = await cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            await conn.close()
+
     async def list_chats(self) -> list[dict]:
         conn = await self.db.connect()
         try:

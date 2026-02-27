@@ -25,7 +25,12 @@ class Database:
         try:
             for migration_file in sorted(self._migrations_dir.glob("*.sql")):
                 sql = migration_file.read_text(encoding="utf-8")
-                await conn.executescript(sql)
+                try:
+                    await conn.executescript(sql)
+                except Exception as exc:
+                    if "duplicate column" in str(exc).lower():
+                        continue
+                    raise
             await conn.commit()
         finally:
             await conn.close()

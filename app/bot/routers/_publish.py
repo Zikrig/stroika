@@ -16,12 +16,16 @@ async def publish_request_event(
 ) -> int:
     events = await ctx.requests.get_events(request["id"])
     attachments_summary = await ctx.requests.get_attachment_summary(request["id"])
+    foreman_info = None
+    if request.get("foreman_user_id"):
+        foreman_info = await ctx.roles.get_user(request["foreman_user_id"])
     text = render_request_card(
         request,
         events=events,
         attachments_summary=attachments_summary,
         note=note,
         note_label=note_label,
+        foreman_info=foreman_info,
     )
     message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=reply_markup)
     if events:

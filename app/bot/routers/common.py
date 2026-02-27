@@ -10,7 +10,7 @@ from app.bot.keyboards.menus import (
     role_picker_inline,
 )
 from app.bot.routers._helpers import private_fsm
-from app.bot.states import AdminAddObjectStates
+from app.bot.states import AdminAddObjectStates, RoleOnboardingStates
 from app.config import get_settings
 from app.domain.enums import Role
 from app.domain.services.role_guard import role_title
@@ -179,8 +179,25 @@ def get_router(ctx: AppContext) -> Router:
         await call.answer()
 
     # ── admin: set user role / pick own role ──────────────────────────
+
+    async def _after_role_assigned(call: CallbackQuery, state: FSMContext, user_id: int, role: Role) -> None:
+        """If foreman role, ask for display name in DM."""
+        if role != Role.FOREMAN:
+            return
+        p_state = private_fsm(state, call.bot.id, call.from_user.id) if call.message.chat.type != "private" else state
+        onboard_state = private_fsm(state, call.bot.id, user_id) if user_id != call.from_user.id else p_state
+        await onboard_state.set_state(RoleOnboardingStates.waiting_foreman_name)
+        await onboard_state.update_data(onboard_user_id=user_id)
+        try:
+            await call.bot.send_message(
+                user_id,
+                "Вам назначена роль Прораб.\nВведите ваше имя (как оно будет отображаться в заявках):",
+            )
+        except Exception:
+            pass
+
     @router.callback_query(F.data.startswith("set_user_role:"))
-    async def set_user_role_pick(call: CallbackQuery) -> None:
+    async def set_user_role_pick(call: CallbackQuery, state: FSMContext) -> None:
         if not _is_admin(call.from_user.id):
             await call.answer("Доступ запрещён", show_alert=True)
             return
@@ -193,10 +210,11 @@ def get_router(ctx: AppContext) -> Router:
             f"Роль назначена: user_id={user_id}, role={role_title(role)}",
             reply_markup=private_main_menu_inline(is_admin=True),
         )
+        await _after_role_assigned(call, state, user_id, role)
         await call.answer("Готово")
 
     @router.callback_query(F.data.startswith("pick_role:"))
-    async def set_my_role_pick(call: CallbackQuery) -> None:
+    async def set_my_role_pick(call: CallbackQuery, state: FSMContext) -> None:
         if not _is_admin(call.from_user.id):
             await call.answer("Доступ запрещён", show_alert=True)
             return
@@ -208,6 +226,22 @@ def get_router(ctx: AppContext) -> Router:
             f"Ваша роль обновлена: {role_title(role)}",
             reply_markup=private_main_menu_inline(is_admin=True),
         )
+        await _after_role_assigned(call, state, call.from_user.id, role)
         await call.answer("Роль сохранена")
+
+    # ── foreman name onboarding (private) ─────────────────────────────
+
+    @router.message(RoleOnboardingStates.waiting_foreman_name, F.chat.type == "private")
+    async def foreman_name_input(message: Message, state: FSMContext) -> None:
+        name = (message.text or "").strip()
+        if not name:
+            await message.answer("Введите ваше имя:")
+            return
+        await ctx.roles.set_display_name(message.from_user.id, name)
+        await state.clear()
+        await message.answer(
+            f"Имя сохранено: {name}",
+            reply_markup=private_main_menu_inline(is_admin=_is_admin(message.from_user.id)),
+        )
 
     return router
