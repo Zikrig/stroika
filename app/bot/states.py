@@ -31,6 +31,13 @@ class AdminPanelStates(StatesGroup):
     waiting_set_role_role = State()
 
 
+class ForemanEditStates(StatesGroup):
+    waiting_edit_description = State()
+    waiting_edit_qty = State()
+    waiting_edit_subobject = State()
+    waiting_edit_need_by = State()
+
+
 class ActionInputStates(StatesGroup):
     waiting_pdo_excel = State()
     waiting_partial_qty = State()

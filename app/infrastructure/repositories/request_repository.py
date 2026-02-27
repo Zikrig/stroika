@@ -92,6 +92,15 @@ class RequestRepository:
         finally:
             await conn.close()
 
+    async def get_request_by_code_global(self, request_code: str) -> dict[str, Any] | None:
+        conn = await self.db.connect()
+        try:
+            cur = await conn.execute("SELECT * FROM requests WHERE request_code=?", (request_code,))
+            row = await cur.fetchone()
+            return self.db.row_to_dict(row)
+        finally:
+            await conn.close()
+
     async def get_request(self, request_id: str) -> dict[str, Any] | None:
         conn = await self.db.connect()
         try:
@@ -122,6 +131,48 @@ class RequestRepository:
             return [dict(r) for r in rows]
         finally:
             await conn.close()
+
+    async def list_requests_by_foreman(
+        self, foreman_user_id: int, archived: bool = False, *, limit: int = 50, offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return (page_items, total_count) for a foreman across all objects."""
+        closed = [StatusCode.CLOSED.value, StatusCode.CANCELLED.value, StatusCode.TERMINATED.value]
+        conn = await self.db.connect()
+        try:
+            base = "FROM requests WHERE foreman_user_id=?"
+            params: list[Any] = [foreman_user_id]
+            if archived:
+                base += " AND status_code IN (?, ?, ?)"
+            else:
+                base += " AND status_code NOT IN (?, ?, ?)"
+            params.extend(closed)
+
+            cnt_cur = await conn.execute(f"SELECT COUNT(*) AS cnt {base}", tuple(params))
+            total = (await cnt_cur.fetchone())["cnt"]
+
+            sql = f"SELECT * {base} ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            cur = await conn.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows], total
+        finally:
+            await conn.close()
+
+    async def update_foreman_fields(self, request_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+        allowed = {"name_from_foreman", "requested_qty", "subobject_name", "need_by"}
+        to_update = {k: v for k, v in fields.items() if k in allowed}
+        if not to_update:
+            return await self.get_request(request_id)
+        to_update["updated_at"] = _now_iso()
+        sets = ", ".join(f"{k}=?" for k in to_update)
+        vals = list(to_update.values()) + [request_id]
+        conn = await self.db.connect()
+        try:
+            await conn.execute(f"UPDATE requests SET {sets} WHERE id=?", tuple(vals))
+            await conn.commit()
+        finally:
+            await conn.close()
+        return await self.get_request(request_id)
 
     async def append_event(
         self,

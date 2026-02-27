@@ -9,18 +9,21 @@ from app.application.dto import CreateRequestInput
 from app.application.use_cases import confirm_full_received, confirm_partial_received, create_request
 from app.application.context import AppContext
 from app.bot.keyboards.menus import (
+    PAGE_SIZE,
     cancel_inline,
     new_request_description_inline,
     object_picker_inline,
     private_main_menu_inline,
+    request_list_inline,
+    request_view_inline,
 )
 from app.bot.keyboards.request_actions import request_actions_keyboard
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
-from app.bot.states import ActionInputStates, ForemanCreateStates, GroupMenuStates
+from app.bot.states import ActionInputStates, ForemanCreateStates, ForemanEditStates, GroupMenuStates
 from app.config import get_settings
-from app.domain.enums import Role
+from app.domain.enums import Role, StageCode
 from app.infrastructure.telegram.publisher import TelegramPublisher
 
 _log = logging.getLogger("bot.foreman")
@@ -220,79 +223,168 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             reply_markup=_menu(message.from_user.id),
         )
 
-    # ── Lists (active / archive / search / history) ───────────────────
+    # ── Lists (active / archive) — paginated buttons ───────────────────
+
+    _EDITABLE_STAGES = {StageCode.CREATED.value, StageCode.PDO_PROCESSING.value}
+
+    async def _send_request_page(message: Message, user_id: int, archived: bool, page: int) -> None:
+        lt = "r" if archived else "a"
+        items, total = await ctx.requests.list_requests_by_foreman(
+            user_id, archived=archived, limit=PAGE_SIZE, offset=page * PAGE_SIZE,
+        )
+        if not items:
+            label = "Архив пуст" if archived else "Активных заявок нет"
+            await message.answer(label, reply_markup=_menu(user_id))
+            return
+        await message.answer(
+            "Архив заявок:" if archived else "Активные заявки:",
+            reply_markup=request_list_inline(items, page, total, lt),
+        )
 
     @router.callback_query(F.data == "pm:active")
     async def list_active(call: CallbackQuery, state: FSMContext) -> None:
-        chats = await ctx.roles.list_chats()
-        if not chats:
-            await call.message.answer("Нет объектов.", reply_markup=_menu(call.from_user.id))
-            await call.answer()
-            return
-        if len(chats) == 1:
-            await _show_active(call.message, chats[0]["id"], call.from_user.id)
-            await call.answer()
-            return
-        await state.set_state(GroupMenuStates.waiting_object_for_active)
-        await call.message.answer(
-            "Выберите объект:",
-            reply_markup=object_picker_inline(chats, "pick_obj_active"),
-        )
-        await call.answer()
-
-    @router.callback_query(
-        GroupMenuStates.waiting_object_for_active,
-        F.data.startswith("pick_obj_active:"),
-    )
-    async def pick_obj_active(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        chat_id = int(call.data.split(":", maxsplit=1)[1])
-        await _show_active(call.message, chat_id, call.from_user.id)
+        await _send_request_page(call.message, call.from_user.id, archived=False, page=0)
         await call.answer()
-
-    async def _show_active(message: Message, chat_id: int, user_id: int) -> None:
-        items = await ctx.requests.list_requests(chat_id, archived=False)
-        if not items:
-            await message.answer("Активных заявок нет", reply_markup=_menu(user_id))
-            return
-        lines = [f"{i['request_code']} | {i.get('name_from_foreman') or '-'} | {i['stage_code']}" for i in items]
-        await message.answer("\n".join(lines), reply_markup=_menu(user_id))
 
     @router.callback_query(F.data == "pm:archive")
     async def list_archive(call: CallbackQuery, state: FSMContext) -> None:
-        chats = await ctx.roles.list_chats()
-        if not chats:
-            await call.message.answer("Нет объектов.", reply_markup=_menu(call.from_user.id))
-            await call.answer()
-            return
-        if len(chats) == 1:
-            await _show_archive(call.message, chats[0]["id"], call.from_user.id)
-            await call.answer()
-            return
-        await state.set_state(GroupMenuStates.waiting_object_for_archive)
-        await call.message.answer(
-            "Выберите объект:",
-            reply_markup=object_picker_inline(chats, "pick_obj_archive"),
-        )
-        await call.answer()
-
-    @router.callback_query(
-        GroupMenuStates.waiting_object_for_archive,
-        F.data.startswith("pick_obj_archive:"),
-    )
-    async def pick_obj_archive(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        chat_id = int(call.data.split(":", maxsplit=1)[1])
-        await _show_archive(call.message, chat_id, call.from_user.id)
+        await _send_request_page(call.message, call.from_user.id, archived=True, page=0)
         await call.answer()
 
-    async def _show_archive(message: Message, chat_id: int, user_id: int) -> None:
-        items = await ctx.requests.list_requests(chat_id, archived=True)
-        if not items:
-            await message.answer("Архив пуст", reply_markup=_menu(user_id))
+    @router.callback_query(F.data.startswith("rlist:"))
+    async def paginate_list(call: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
+        parts = call.data.split(":")
+        lt, page = parts[1], int(parts[2])
+        await _send_request_page(call.message, call.from_user.id, archived=(lt == "r"), page=page)
+        await call.answer()
+
+    @router.callback_query(F.data == "back_to_menu")
+    async def back_to_menu(call: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
+        await call.message.answer("Главное меню", reply_markup=_menu(call.from_user.id))
+        await call.answer()
+
+    @router.callback_query(F.data == "noop")
+    async def noop(call: CallbackQuery) -> None:
+        await call.answer()
+
+    # ── View single request card ──────────────────────────────────────
+
+    async def _show_request_card(message: Message, code: str, user_id: int, lt: str, page: int) -> None:
+        request = await ctx.requests.get_request_by_code_global(code)
+        if not request:
+            await message.answer("Заявка не найдена", reply_markup=_menu(user_id))
             return
-        lines = [f"{i['request_code']} | {i['status_code']}" for i in items]
-        await message.answer("\n".join(lines), reply_markup=_menu(user_id))
+        from app.bot.formatters.request_card import render_request_card
+        events = await ctx.requests.get_events(request["id"])
+        attachments_summary = await ctx.requests.get_attachment_summary(request["id"])
+        foreman_info = None
+        if request.get("foreman_user_id"):
+            foreman_info = await ctx.roles.get_user(request["foreman_user_id"])
+        text = render_request_card(
+            request, events=events, attachments_summary=attachments_summary, foreman_info=foreman_info,
+        )
+        can_edit = (
+            request.get("foreman_user_id") == user_id
+            and request.get("stage_code") in _EDITABLE_STAGES
+        )
+        await message.answer(text, reply_markup=request_view_inline(request, can_edit, lt, page))
+
+    @router.callback_query(F.data.startswith("vreq:"))
+    async def view_request(call: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
+        parts = call.data.split(":")
+        lt, page, code = parts[1], int(parts[2]), parts[3]
+        await _show_request_card(call.message, code, call.from_user.id, lt, page)
+        await call.answer()
+
+    # ── Edit foreman fields ───────────────────────────────────────────
+
+    _EDIT_FIELD_MAP = {
+        "d": ("name_from_foreman", ForemanEditStates.waiting_edit_description, "Введите новое описание:"),
+        "q": ("requested_qty", ForemanEditStates.waiting_edit_qty, "Введите новое количество:"),
+        "s": ("subobject_name", ForemanEditStates.waiting_edit_subobject, "Введите новый подобъект (или '-' для пустого):"),
+        "n": ("need_by", ForemanEditStates.waiting_edit_need_by, "Введите новый срок (или '-' для пустого):"),
+    }
+
+    @router.callback_query(F.data.startswith("ed:"))
+    async def edit_field_start(call: CallbackQuery, state: FSMContext) -> None:
+        parts = call.data.split(":")
+        field_key, code = parts[1], parts[2]
+        if field_key not in _EDIT_FIELD_MAP:
+            await call.answer("Неизвестное поле", show_alert=True)
+            return
+        request = await ctx.requests.get_request_by_code_global(code)
+        if not request:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+        if request.get("foreman_user_id") != call.from_user.id:
+            await call.answer("Это не ваша заявка", show_alert=True)
+            return
+        if request.get("stage_code") not in _EDITABLE_STAGES:
+            await call.answer("Редактирование больше недоступно", show_alert=True)
+            return
+
+        db_field, fsm_state, prompt = _EDIT_FIELD_MAP[field_key]
+        await state.set_state(fsm_state)
+        await state.update_data(edit_request_code=code, edit_db_field=db_field)
+        await call.message.answer(prompt, reply_markup=cancel_inline())
+        await call.answer()
+
+    async def _finish_edit(message: Message, state: FSMContext, value: object) -> None:
+        data = await state.get_data()
+        code = data["edit_request_code"]
+        db_field = data["edit_db_field"]
+        await state.clear()
+
+        request = await ctx.requests.get_request_by_code_global(code)
+        if not request or request.get("stage_code") not in _EDITABLE_STAGES:
+            await message.answer("Редактирование больше недоступно", reply_markup=_menu(message.from_user.id))
+            return
+
+        updated = await ctx.requests.update_foreman_fields(request["id"], {db_field: value})
+        if not updated:
+            await message.answer("Ошибка обновления", reply_markup=_menu(message.from_user.id))
+            return
+
+        role = await _role(message.from_user.id)
+        await publish_request_event(
+            ctx=ctx, publisher=publisher, chat_id=updated["chat_id"],
+            request=updated, reply_markup=request_actions_keyboard(updated, role or Role.FOREMAN),
+        )
+        await message.answer(f"Заявка {code} обновлена", reply_markup=_menu(message.from_user.id))
+
+    @router.message(ForemanEditStates.waiting_edit_description, F.chat.type == "private")
+    async def edit_description_input(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer("Введите непустое описание:")
+            return
+        await _finish_edit(message, state, text)
+
+    @router.message(ForemanEditStates.waiting_edit_qty, F.chat.type == "private")
+    async def edit_qty_input(message: Message, state: FSMContext) -> None:
+        try:
+            qty = float((message.text or "0").replace(",", "."))
+        except (ValueError, TypeError):
+            await message.answer("Введите количество числом:")
+            return
+        await _finish_edit(message, state, qty)
+
+    @router.message(ForemanEditStates.waiting_edit_subobject, F.chat.type == "private")
+    async def edit_subobject_input(message: Message, state: FSMContext) -> None:
+        raw = (message.text or "").strip()
+        await _finish_edit(message, state, None if raw in {"", "-"} else raw)
+
+    @router.message(ForemanEditStates.waiting_edit_need_by, F.chat.type == "private")
+    async def edit_need_by_input(message: Message, state: FSMContext) -> None:
+        raw = (message.text or "").strip()
+        await _finish_edit(message, state, None if raw in {"", "-"} else raw)
+
+    # ── Search / history ──────────────────────────────────────────────
 
     @router.callback_query(F.data == "pm:search")
     async def search_button(call: CallbackQuery, state: FSMContext) -> None:

@@ -1,4 +1,8 @@
+import math
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+PAGE_SIZE = 5
 
 
 def cancel_inline() -> InlineKeyboardMarkup:
@@ -49,6 +53,54 @@ def object_picker_inline(chats: list[dict], callback_prefix: str) -> InlineKeybo
             )
         ])
     rows.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def request_list_inline(
+    items: list[dict],
+    page: int,
+    total: int,
+    list_type: str,
+) -> InlineKeyboardMarkup:
+    """Paginated list of requests as buttons. list_type is 'a' (active) or 'r' (archive)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for item in items:
+        code = item.get("request_code", "?")
+        desc = item.get("name_from_foreman") or item.get("object_name") or ""
+        if len(desc) > 30:
+            desc = desc[:27] + "..."
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{code} — {desc}",
+                callback_data=f"vreq:{list_type}:{page}:{code}",
+            )
+        ])
+    nav: list[InlineKeyboardButton] = []
+    total_pages = max(1, math.ceil(total / PAGE_SIZE))
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"rlist:{list_type}:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"rlist:{list_type}:{page + 1}"))
+    rows.append(nav)
+    rows.append([InlineKeyboardButton(text="← Меню", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def request_view_inline(request: dict, can_edit: bool, list_type: str, page: int) -> InlineKeyboardMarkup:
+    """Buttons shown when viewing a single request card in DM."""
+    code = request["request_code"]
+    rows: list[list[InlineKeyboardButton]] = []
+    if can_edit:
+        rows.append([
+            InlineKeyboardButton(text="✏️ Описание", callback_data=f"ed:d:{code}"),
+            InlineKeyboardButton(text="✏️ Кол-во", callback_data=f"ed:q:{code}"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="✏️ Подобъект", callback_data=f"ed:s:{code}"),
+            InlineKeyboardButton(text="✏️ Срок", callback_data=f"ed:n:{code}"),
+        ])
+    rows.append([InlineKeyboardButton(text="← К списку", callback_data=f"rlist:{list_type}:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
