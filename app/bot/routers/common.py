@@ -1,5 +1,6 @@
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.filters.state import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -113,7 +114,7 @@ def get_router(ctx: AppContext) -> Router:
     @router.message(Command("set"), F.chat.type.in_({"group", "supergroup"}))
     async def set_role_reply(message: Message) -> None:
         if not _is_admin_id(message.from_user.id):
-            await message.answer("Команда /set доступна только ADMIN_IDS")
+            await message.answer("Команда /set доступна только админам")
             return
         if not message.reply_to_message or not message.reply_to_message.from_user:
             await message.answer("Команда /set должна быть ответом на сообщение пользователя")
@@ -143,7 +144,6 @@ def get_router(ctx: AppContext) -> Router:
                 ),
                 reply_markup=keyboard,
             )
-            await message.answer("Отправил вам в личку выбор роли.")
         except Exception:
             await message.answer("Не удалось написать вам в личку. Сначала откройте ЛС с ботом и нажмите /start.")
 
@@ -174,7 +174,7 @@ def get_router(ctx: AppContext) -> Router:
         await call.message.answer(f"Ваша роль обновлена: {role_title(role)}", reply_markup=private_admin_menu_inline())
         await call.answer("Роль сохранена")
 
-    @router.message(F.chat.type.in_({"group", "supergroup"}))
+    @router.message(StateFilter(None), F.chat.type.in_({"group", "supergroup"}))
     async def upsert_participants(message: Message) -> None:
         if not message.from_user:
             return
