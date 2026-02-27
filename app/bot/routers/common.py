@@ -9,39 +9,17 @@ from app.bot.keyboards.menus import (
     private_admin_menu_inline,
     role_picker_inline,
 )
+from app.config import get_settings
 from app.domain.enums import Role
 from app.domain.services.role_guard import role_title
 
 
 def get_router(ctx: AppContext) -> Router:
     router = Router(name="common")
+    admin_ids = set(get_settings().admin_id_list)
 
-    async def _is_group_admin(chat_id: int, user_id: int, message: Message) -> bool:
-        member = await message.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-        return member.status in {"administrator", "creator"}
-
-    async def _is_any_known_group_admin(user_id: int, bot) -> bool:
-        chats = await ctx.roles.list_chats()
-        for chat in chats:
-            try:
-                member = await bot.get_chat_member(chat_id=int(chat["id"]), user_id=user_id)
-            except Exception:
-                continue
-            if member.status in {"administrator", "creator"}:
-                return True
-        return False
-
-    async def _send_private_role_info(message: Message) -> None:
-        role = await ctx.roles.get_global_role(message.from_user.id)
-        role_text = "не назначена" if role is None else role_title(role)
-        await message.bot.send_message(
-            chat_id=message.from_user.id,
-            text=(
-                "Привет!\n"
-                "Управление ролями доступно только администраторам группы.\n"
-                f"Ваша роль: {role_text}"
-            ),
-        )
+    def _is_admin_id(user_id: int) -> bool:
+        return user_id in admin_ids
 
     @router.message(Command("start"))
     async def start(message: Message, state: FSMContext) -> None:
@@ -49,15 +27,20 @@ def get_router(ctx: AppContext) -> Router:
         if message.chat.type == "private":
             role = await ctx.roles.get_global_role(message.from_user.id)
             role_text = "не назначена" if role is None else role_title(role)
-            is_admin = await _is_any_known_group_admin(message.from_user.id, message.bot)
-            reply_markup = private_admin_menu_inline() if is_admin else None
-            await message.answer(
-                "Бот учёта заявок запущен.\n"
-                "Управление из лички на кнопках.\n"
-                "Доступные команды: /start, /admin\n"
-                f"Ваша роль: {role_text}",
-                reply_markup=reply_markup,
-            )
+            if _is_admin_id(message.from_user.id):
+                await message.answer(
+                    "Бот учёта заявок запущен.\n"
+                    "Управление из лички на кнопках.\n"
+                    "Доступные команды: /start, /admin\n"
+                    f"Ваша роль: {role_text}",
+                    reply_markup=private_admin_menu_inline(),
+                )
+            else:
+                await message.answer(
+                    "Привет!\n"
+                    "Бот учёта заявок запущен.\n"
+                    f"Ваша роль: {role_text}"
+                )
             return
         await message.answer(
             "Бот учёта заявок запущен.\n"
@@ -70,29 +53,23 @@ def get_router(ctx: AppContext) -> Router:
     async def admin(message: Message) -> None:
         if message.chat.type == "private":
             role = await ctx.roles.get_global_role(message.from_user.id)
-            is_admin = await _is_any_known_group_admin(message.from_user.id, message.bot)
-            if not is_admin:
-                role_text = "не назначена" if role is None else role_title(role)
-                await message.answer(
-                    "Привет!\n"
-                    "Управление ролями доступно только администраторам группы.\n"
-                    f"Ваша роль: {role_text}"
-                )
+            role_text = "не назначена" if role is None else role_title(role)
+            if _is_admin_id(message.from_user.id):
+                if role is None:
+                    await message.answer("Роль пока не назначена.", reply_markup=private_admin_menu_inline())
+                    return
+                await message.answer(f"Ваша глобальная роль: {role_title(role)}", reply_markup=private_admin_menu_inline())
                 return
-            if role is None:
-                await message.answer("Роль пока не назначена.", reply_markup=private_admin_menu_inline())
-                return
-            await message.answer(f"Ваша глобальная роль: {role_title(role)}", reply_markup=private_admin_menu_inline())
+            await message.answer(
+                "Привет!\n"
+                f"Ваша роль: {role_text}"
+            )
             return
         if message.chat.type not in {"group", "supergroup"}:
             await message.answer("Команду нужно запускать в служебной группе")
             return
-        if not await _is_group_admin(message.chat.id, message.from_user.id, message):
-            try:
-                await _send_private_role_info(message)
-                await message.answer("Написал вам в личку вашу роль.")
-            except Exception:
-                await message.answer("Не удалось написать в личку. Откройте ЛС с ботом и повторите /admin.")
+        if not _is_admin_id(message.from_user.id):
+            await message.answer("Команда доступна только ADMIN_IDS")
             return
         role = await ctx.roles.get_role(message.chat.id, message.from_user.id)
         if role is None:
@@ -102,8 +79,8 @@ def get_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data == "admin_menu:set_my_role")
     async def admin_set_my_role(call: CallbackQuery) -> None:
-        if not await _is_any_known_group_admin(call.from_user.id, call.bot):
-            await call.message.answer("Управление ролями доступно только администраторам группы.")
+        if not _is_admin_id(call.from_user.id):
+            await call.message.answer("Доступ запрещён. Действие доступно только ADMIN_IDS.")
             await call.answer()
             return
         await call.message.answer("Выберите новую роль для себя:", reply_markup=role_picker_inline())
@@ -111,8 +88,8 @@ def get_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data == "admin_menu:set_help")
     async def set_help(call: CallbackQuery) -> None:
-        if not await _is_any_known_group_admin(call.from_user.id, call.bot):
-            await call.message.answer("Управление ролями доступно только администраторам группы.")
+        if not _is_admin_id(call.from_user.id):
+            await call.message.answer("Доступ запрещён. Действие доступно только ADMIN_IDS.")
             await call.answer()
             return
         await call.message.answer(
@@ -135,8 +112,8 @@ def get_router(ctx: AppContext) -> Router:
 
     @router.message(Command("set"), F.chat.type.in_({"group", "supergroup"}))
     async def set_role_reply(message: Message) -> None:
-        if not await _is_group_admin(message.chat.id, message.from_user.id, message):
-            await message.answer("Команда /set доступна только администраторам группы")
+        if not _is_admin_id(message.from_user.id):
+            await message.answer("Команда /set доступна только ADMIN_IDS")
             return
         if not message.reply_to_message or not message.reply_to_message.from_user:
             await message.answer("Команда /set должна быть ответом на сообщение пользователя")
@@ -172,6 +149,10 @@ def get_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("set_user_role:"))
     async def set_user_role_pick(call: CallbackQuery) -> None:
+        if not _is_admin_id(call.from_user.id):
+            await call.message.answer("Доступ запрещён. Действие доступно только ADMIN_IDS.")
+            await call.answer()
+            return
         _, user_id_raw, role_raw = call.data.split(":")
         user_id = int(user_id_raw)
         role = Role(role_raw)
@@ -182,8 +163,8 @@ def get_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("pick_role:"))
     async def set_my_role_pick(call: CallbackQuery) -> None:
-        if not await _is_any_known_group_admin(call.from_user.id, call.bot):
-            await call.message.answer("Управление ролями доступно только администраторам группы.")
+        if not _is_admin_id(call.from_user.id):
+            await call.message.answer("Доступ запрещён. Действие доступно только ADMIN_IDS.")
             await call.answer()
             return
         role_raw = call.data.split(":", maxsplit=1)[1]
