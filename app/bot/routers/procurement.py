@@ -1,32 +1,42 @@
+# pyright: reportUnusedFunction=false
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.application.context import AppContext
 from app.application.use_cases import mark_purchased, mark_shipped, return_to_pdo, take_request
-from app.bot.keyboards.menus import cancel_inline
+from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
+from app.bot.routers._helpers import private_fsm
 from app.bot.keyboards.request_actions import request_actions_keyboard
 from app.bot.routers._publish import publish_request_event
 from app.bot.states import ActionInputStates
+from app.config import get_settings
 from app.domain.enums import Role
 from app.infrastructure.telegram.publisher import TelegramPublisher
 
 
 def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     router = Router(name="procurement")
+    admin_ids = set(get_settings().admin_id_list)
 
-    async def _role(chat_id: int, user_id: int) -> Role | None:
-        return await ctx.roles.get_role(chat_id, user_id)
+    def _menu(uid: int):
+        return private_main_menu_inline(is_admin=uid in admin_ids)
+
+    async def _role(user_id: int) -> Role | None:
+        return await ctx.roles.get_global_role(user_id)
+
+    # ── Take (one-click) ─────────────────────────────────────────────
 
     @router.callback_query(F.data.startswith("take_proc:"))
     async def take_proc(call: CallbackQuery) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.PROCUREMENT:
             await call.answer("Недостаточно прав", show_alert=True)
             return
         request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
         try:
@@ -36,39 +46,39 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=call.message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, role),
+                ctx=ctx, publisher=publisher, chat_id=group_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, role),
             )
         await call.answer("Заявка взята в работу")
 
+    # ── Purchased (group → DM FSM) ───────────────────────────────────
+
     @router.callback_query(F.data.startswith("purchased:"))
     async def purchased_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.PROCUREMENT:
             await call.answer("Недостаточно прав", show_alert=True)
             return
         request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_purchase_date)
-        await state.update_data(target_request_id=request_id, source_message_id=call.message.message_id)
-        await call.message.answer("Укажите ожидаемую дату отгрузки", reply_markup=cancel_inline())
-        await call.answer()
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(ActionInputStates.waiting_purchase_date)
+        await p_state.update_data(target_request_id=request_id, target_chat_id=group_chat_id, source_message_id=call.message.message_id)
+        try:
+            await call.bot.send_message(call.from_user.id, "Укажите ожидаемую дату отгрузки", reply_markup=cancel_inline())
+        except Exception:
+            await call.answer("Сначала напишите /start боту в личку", show_alert=True)
+            await p_state.clear()
+            return
+        await call.answer("Продолжите в личных сообщениях")
 
-    @router.message(ActionInputStates.waiting_purchase_date)
+    @router.message(ActionInputStates.waiting_purchase_date, F.chat.type == "private")
     async def purchased_date(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         try:
             req = await mark_purchased.execute(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
@@ -77,39 +87,39 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, Role.PROCUREMENT),
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, Role.PROCUREMENT),
             )
-        await message.answer("Этап 'Закуплено' сохранен")
+        await message.answer("Этап 'Закуплено' сохранен", reply_markup=_menu(message.from_user.id))
+
+    # ── Shipped (group → DM FSM) ─────────────────────────────────────
 
     @router.callback_query(F.data.startswith("shipped:"))
     async def shipped_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.PROCUREMENT:
             await call.answer("Недостаточно прав", show_alert=True)
             return
         request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_ship_date)
-        await state.update_data(target_request_id=request_id, source_message_id=call.message.message_id)
-        await call.message.answer("Укажите ожидаемую дату поставки на объект", reply_markup=cancel_inline())
-        await call.answer()
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(ActionInputStates.waiting_ship_date)
+        await p_state.update_data(target_request_id=request_id, target_chat_id=group_chat_id, source_message_id=call.message.message_id)
+        try:
+            await call.bot.send_message(call.from_user.id, "Укажите ожидаемую дату поставки на объект", reply_markup=cancel_inline())
+        except Exception:
+            await call.answer("Сначала напишите /start боту в личку", show_alert=True)
+            await p_state.clear()
+            return
+        await call.answer("Продолжите в личных сообщениях")
 
-    @router.message(ActionInputStates.waiting_ship_date)
+    @router.message(ActionInputStates.waiting_ship_date, F.chat.type == "private")
     async def shipped_date(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         try:
             req = await mark_shipped.execute(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
@@ -118,22 +128,22 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, Role.FOREMAN),
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, Role.FOREMAN),
             )
-        await message.answer("Этап 'Отгружено' сохранен")
+        await message.answer("Этап 'Отгружено' сохранен", reply_markup=_menu(message.from_user.id))
+
+    # ── Return to PDO (one-click) ────────────────────────────────────
 
     @router.callback_query(F.data.startswith("return_pdo:"))
-    async def return_to_pdo(call: CallbackQuery) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+    async def return_to_pdo_click(call: CallbackQuery) -> None:
+        role = await _role(call.from_user.id)
         if role != Role.PROCUREMENT:
             await call.answer("Недостаточно прав", show_alert=True)
             return
         request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
         try:
@@ -143,11 +153,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=call.message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, Role.PDO),
+                ctx=ctx, publisher=publisher, chat_id=group_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, Role.PDO),
             )
         await call.answer("Возвращено в ПДО")
 

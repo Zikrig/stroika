@@ -19,49 +19,37 @@ def new_request_description_inline() -> InlineKeyboardMarkup:
     )
 
 
-def group_main_menu_inline() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Новая заявка", callback_data="group_menu:new"),
-                InlineKeyboardButton(text="Активные заявки", callback_data="group_menu:active"),
-            ],
-            [
-                InlineKeyboardButton(text="Архивные заявки", callback_data="group_menu:archive"),
-                InlineKeyboardButton(text="Поиск заявки", callback_data="group_menu:search"),
-            ],
-            [
-                InlineKeyboardButton(text="История заявки", callback_data="group_menu:history"),
-                InlineKeyboardButton(text="ID группы", callback_data="group_menu:chat_id"),
-            ],
-        ]
-    )
+def private_main_menu_inline(is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="Новая заявка", callback_data="pm:new_request")],
+        [
+            InlineKeyboardButton(text="Активные заявки", callback_data="pm:active"),
+            InlineKeyboardButton(text="Архив", callback_data="pm:archive"),
+        ],
+        [
+            InlineKeyboardButton(text="Поиск заявки", callback_data="pm:search"),
+            InlineKeyboardButton(text="История заявки", callback_data="pm:history"),
+        ],
+    ]
+    if is_admin:
+        rows.append([
+            InlineKeyboardButton(text="Сменить мою роль", callback_data="admin_menu:set_my_role"),
+            InlineKeyboardButton(text="Роли", callback_data="admin_menu:set_help"),
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def private_admin_menu_inline() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Сменить мою роль", callback_data="admin_menu:set_my_role"),
-            ],
-            [
-                InlineKeyboardButton(text="Роли", callback_data="admin_menu:set_help"),
-            ],
-        ]
-    )
-
-
-def admin_groups_inline(chats: list[dict]) -> InlineKeyboardMarkup:
+def object_picker_inline(chats: list[dict], callback_prefix: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for chat in chats:
-        rows.append(
-            [InlineKeyboardButton(text=f"{chat['title']} ({chat['id']})", callback_data=f"admin_role:{chat['id']}")]
-        )
-    if rows:
-        rows.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")])
-    return InlineKeyboardMarkup(
-        inline_keyboard=rows or [[InlineKeyboardButton(text="Группы не найдены", callback_data="admin_role:none")]]
-    )
+        rows.append([
+            InlineKeyboardButton(
+                text=chat["title"],
+                callback_data=f"{callback_prefix}:{chat['id']}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def role_picker_inline() -> InlineKeyboardMarkup:

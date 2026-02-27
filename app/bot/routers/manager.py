@@ -1,27 +1,56 @@
+# pyright: reportUnusedFunction=false
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.application.context import AppContext
 from app.application.use_cases import manager_actions, pause_resume_request
-from app.bot.keyboards.menus import cancel_inline
+from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.keyboards.request_actions import request_actions_keyboard
 from app.bot.routers._guards import is_latest_request_message
+from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
 from app.bot.states import ActionInputStates
+from app.config import get_settings
 from app.domain.enums import Role
 from app.infrastructure.telegram.publisher import TelegramPublisher
 
 
 def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     router = Router(name="manager")
+    admin_ids = set(get_settings().admin_id_list)
 
-    async def _role(chat_id: int, user_id: int) -> Role | None:
-        return await ctx.roles.get_role(chat_id, user_id)
+    def _menu(uid: int):
+        return private_main_menu_inline(is_admin=uid in admin_ids)
+
+    async def _role(user_id: int) -> Role | None:
+        return await ctx.roles.get_global_role(user_id)
+
+    # ── helper: redirect FSM to DM ───────────────────────────────────
+
+    async def _redirect_to_dm(call: CallbackQuery, state: FSMContext, fsm_state, prompt: str, request_id: str):
+        group_chat_id = call.message.chat.id
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(fsm_state)
+        await p_state.update_data(
+            target_request_id=request_id,
+            target_chat_id=group_chat_id,
+            source_message_id=call.message.message_id,
+        )
+        try:
+            await call.bot.send_message(call.from_user.id, prompt, reply_markup=cancel_inline())
+        except Exception:
+            await call.answer("Сначала напишите /start боту в личку", show_alert=True)
+            await p_state.clear()
+            return False
+        await call.answer("Продолжите в личных сообщениях")
+        return True
+
+    # ── Comment ───────────────────────────────────────────────────────
 
     @router.callback_query(F.data.startswith("mgr_comment:"))
     async def comment_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.MANAGER:
             await call.answer("Недостаточно прав", show_alert=True)
             return
@@ -29,37 +58,27 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_manager_comment)
-        await state.update_data(target_request_id=request_id, source_message_id=call.message.message_id)
-        await call.message.answer("Введите комментарий руководителя", reply_markup=cancel_inline())
-        await call.answer()
+        await _redirect_to_dm(call, state, ActionInputStates.waiting_manager_comment, "Введите комментарий руководителя", request_id)
 
-    @router.message(ActionInputStates.waiting_manager_comment)
+    @router.message(ActionInputStates.waiting_manager_comment, F.chat.type == "private")
     async def comment_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         req = await manager_actions.comment(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, Role.MANAGER),
-                note=message.text or "",
-                note_label="Комментарий руководителя",
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, Role.MANAGER),
+                note=message.text or "", note_label="Комментарий руководителя",
             )
+        await message.answer("Комментарий сохранён", reply_markup=_menu(message.from_user.id))
+
+    # ── Pause ─────────────────────────────────────────────────────────
 
     @router.callback_query(F.data.startswith("pause:"))
     async def pause_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.MANAGER:
             await call.answer("Недостаточно прав", show_alert=True)
             return
@@ -67,43 +86,31 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_pause_reason)
-        await state.update_data(target_request_id=request_id, source_message_id=call.message.message_id)
-        await call.message.answer("Укажите причину паузы", reply_markup=cancel_inline())
-        await call.answer()
+        await _redirect_to_dm(call, state, ActionInputStates.waiting_pause_reason, "Укажите причину паузы", request_id)
 
-    @router.message(ActionInputStates.waiting_pause_reason)
+    @router.message(ActionInputStates.waiting_pause_reason, F.chat.type == "private")
     async def pause_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         try:
-            req = await pause_resume_request.pause(
-                ctx.requests, data["target_request_id"], message.from_user.id, message.text or ""
-            )
+            req = await pause_resume_request.pause(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
             await message.answer(str(exc))
             return
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, Role.MANAGER),
-                note=message.text or "",
-                note_label="Причина паузы",
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, Role.MANAGER),
+                note=message.text or "", note_label="Причина паузы",
             )
+        await message.answer("Пауза установлена", reply_markup=_menu(message.from_user.id))
+
+    # ── Resume ────────────────────────────────────────────────────────
 
     @router.callback_query(F.data.startswith("resume:"))
     async def resume_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.MANAGER:
             await call.answer("Недостаточно прав", show_alert=True)
             return
@@ -111,43 +118,31 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_resume_comment)
-        await state.update_data(target_request_id=request_id, source_message_id=call.message.message_id)
-        await call.message.answer("Комментарий к снятию паузы", reply_markup=cancel_inline())
-        await call.answer()
+        await _redirect_to_dm(call, state, ActionInputStates.waiting_resume_comment, "Комментарий к снятию паузы", request_id)
 
-    @router.message(ActionInputStates.waiting_resume_comment)
+    @router.message(ActionInputStates.waiting_resume_comment, F.chat.type == "private")
     async def resume_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         try:
-            req = await pause_resume_request.resume(
-                ctx.requests, data["target_request_id"], message.from_user.id, message.text or ""
-            )
+            req = await pause_resume_request.resume(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
             await message.answer(str(exc))
             return
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=request_actions_keyboard(req, Role.MANAGER),
-                note=message.text or "",
-                note_label="Комментарий к снятию паузы",
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=request_actions_keyboard(req, Role.MANAGER),
+                note=message.text or "", note_label="Комментарий к снятию паузы",
             )
+        await message.answer("Пауза снята", reply_markup=_menu(message.from_user.id))
+
+    # ── Terminate ─────────────────────────────────────────────────────
 
     @router.callback_query(F.data.startswith("terminate:"))
     async def terminate_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.MANAGER:
             await call.answer("Недостаточно прав", show_alert=True)
             return
@@ -155,32 +150,20 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_terminate_reason)
-        await state.update_data(target_request_id=request_id, source_message_id=call.message.message_id)
-        await call.message.answer("Укажите причину прекращения", reply_markup=cancel_inline())
-        await call.answer()
+        await _redirect_to_dm(call, state, ActionInputStates.waiting_terminate_reason, "Укажите причину прекращения", request_id)
 
-    @router.message(ActionInputStates.waiting_terminate_reason)
+    @router.message(ActionInputStates.waiting_terminate_reason, F.chat.type == "private")
     async def terminate_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         req = await manager_actions.terminate(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=None,
-                note=message.text or "",
-                note_label="Причина прекращения",
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=None,
+                note=message.text or "", note_label="Причина прекращения",
             )
+        await message.answer("Закупка прекращена", reply_markup=_menu(message.from_user.id))
 
     return router

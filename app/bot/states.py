@@ -1,7 +1,12 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
+class AdminAddObjectStates(StatesGroup):
+    waiting_object_name = State()
+
+
 class ForemanCreateStates(StatesGroup):
+    waiting_object_selection = State()
     waiting_description = State()
     waiting_qty = State()
     waiting_subobject = State()
@@ -11,6 +16,8 @@ class ForemanCreateStates(StatesGroup):
 class GroupMenuStates(StatesGroup):
     waiting_search_query = State()
     waiting_history_code = State()
+    waiting_object_for_active = State()
+    waiting_object_for_archive = State()
 
 
 class AdminPanelStates(StatesGroup):

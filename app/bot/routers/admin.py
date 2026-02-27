@@ -1,3 +1,4 @@
+# pyright: reportUnusedFunction=false
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -5,50 +6,60 @@ from aiogram.types import CallbackQuery, Message
 from app.application.context import AppContext
 from app.application.dto import CreateRequestInput
 from app.application.use_cases import cancel_request, create_request
-from app.bot.keyboards.menus import cancel_inline
+from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.keyboards.request_actions import request_actions_keyboard
 from app.bot.routers._guards import is_latest_request_message
+from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
 from app.bot.states import ActionInputStates
+from app.config import get_settings
 from app.domain.enums import Role
 from app.infrastructure.telegram.publisher import TelegramPublisher
 
 
 def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     router = Router(name="actions")
+    admin_ids = set(get_settings().admin_id_list)
 
-    async def _role(chat_id: int, user_id: int) -> Role | None:
-        return await ctx.roles.get_role(chat_id, user_id)
+    def _menu(uid: int):
+        return private_main_menu_inline(is_admin=uid in admin_ids)
+
+    async def _role(user_id: int) -> Role | None:
+        return await ctx.roles.get_global_role(user_id)
+
+    # ── Cancel (group card → DM FSM) ─────────────────────────────────
 
     @router.callback_query(F.data.startswith("cancel:"))
     async def cancel_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role not in {Role.FOREMAN, Role.PDO, Role.PROCUREMENT}:
             await call.answer("Недостаточно прав", show_alert=True)
             return
         request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
-        await state.set_state(ActionInputStates.waiting_cancel_reason)
-        await state.update_data(
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(ActionInputStates.waiting_cancel_reason)
+        await p_state.update_data(
             target_request_id=request_id,
             actor_role=role.value,
+            target_chat_id=group_chat_id,
             source_message_id=call.message.message_id,
         )
-        await call.message.answer("Укажите причину отмены", reply_markup=cancel_inline())
-        await call.answer()
+        try:
+            await call.bot.send_message(call.from_user.id, "Укажите причину отмены", reply_markup=cancel_inline())
+        except Exception:
+            await call.answer("Сначала напишите /start боту в личку", show_alert=True)
+            await p_state.clear()
+            return
+        await call.answer("Продолжите в личных сообщениях")
 
-    @router.message(ActionInputStates.waiting_cancel_reason)
+    @router.message(ActionInputStates.waiting_cancel_reason, F.chat.type == "private")
     async def cancel_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        source_message_id = int(data.get("source_message_id", 0))
-        if source_message_id and not await is_latest_request_message(
-            ctx, data["target_request_id"], message.chat.id, source_message_id
-        ):
-            await message.answer("Карточка устарела. Нажмите действие на последнем сообщении по заявке.")
-            await state.clear()
-            return
+        target_chat_id = data["target_chat_id"]
         role = Role(data["actor_role"])
         try:
             req = await cancel_request.execute(
@@ -64,23 +75,23 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await state.clear()
         if req:
             await publish_request_event(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=message.chat.id,
-                request=req,
-                reply_markup=None,
-                note=message.text or "",
-                note_label="Причина отмены",
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=None,
+                note=message.text or "", note_label="Причина отмены",
             )
+        await message.answer("Заявка отменена", reply_markup=_menu(message.from_user.id))
+
+    # ── Repeat (one-click, group card) ────────────────────────────────
 
     @router.callback_query(F.data.startswith("repeat:"))
     async def repeat_request(call: CallbackQuery) -> None:
-        role = await _role(call.message.chat.id, call.from_user.id)
+        role = await _role(call.from_user.id)
         if role != Role.FOREMAN:
             await call.answer("Недостаточно прав", show_alert=True)
             return
         request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
         src = await ctx.requests.get_request(request_id)
@@ -90,7 +101,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         req = await create_request.execute(
             ctx.requests,
             CreateRequestInput(
-                chat_id=call.message.chat.id,
+                chat_id=group_chat_id,
                 foreman_user_id=call.from_user.id,
                 object_name=src["object_name"],
                 description=src.get("name_from_foreman") or src.get("nomenclature_1c") or "Повтор",
@@ -101,11 +112,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             ),
         )
         await publish_request_event(
-            ctx=ctx,
-            publisher=publisher,
-            chat_id=call.message.chat.id,
-            request=req,
-            reply_markup=request_actions_keyboard(req, Role.FOREMAN),
+            ctx=ctx, publisher=publisher, chat_id=group_chat_id,
+            request=req, reply_markup=request_actions_keyboard(req, Role.FOREMAN),
         )
         await call.answer("Повторная заявка создана")
 
