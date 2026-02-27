@@ -7,7 +7,8 @@ def _buttons_for_role(request_id: str, stage: StageCode, role: Role) -> list[lis
     """Buttons for a single role at this stage (for DM or single-role use)."""
     out: list[list[InlineKeyboardButton]] = []
     if role == Role.PDO and stage in {StageCode.CREATED, StageCode.PDO_PROCESSING}:
-        out.append([InlineKeyboardButton(text="К заявке", callback_data=f"take_pdo:{request_id}")])
+        if stage == StageCode.CREATED:
+            out.append([InlineKeyboardButton(text="К заявке", callback_data=f"take_pdo:{request_id}")])
         out.append([InlineKeyboardButton(text="Загрузить форму ПДО", callback_data=f"pdo_template:{request_id}")])
         out.append([InlineKeyboardButton(text="Отменить", callback_data=f"cancel:{request_id}")])
     if role == Role.PROCUREMENT:
@@ -47,16 +48,38 @@ def request_actions_keyboard(request: dict, role: Role) -> InlineKeyboardMarkup 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def request_actions_keyboard_group(request: dict) -> InlineKeyboardMarkup | None:
+def _format_in_work_label(role_label: str, user: dict | None) -> str:
+    """Format 'В работе: Роль (@login)' or 'В работе: Роль (id 123)'."""
+    if not user:
+        return f"В работе: {role_label}"
+    username = user.get("username")
+    uid = user.get("id")
+    if username:
+        return f"В работе: {role_label} (@{username})"
+    if uid is not None:
+        return f"В работе: {role_label} (id {uid})"
+    return f"В работе: {role_label}"
+
+
+def request_actions_keyboard_group(
+    request: dict,
+    taken_by_pdo: dict | None = None,
+    taken_by_proc: dict | None = None,
+) -> InlineKeyboardMarkup | None:
     """Keyboard for group: show buttons for all roles that have actions at this stage.
-    Each callback is shown once (no duplicate labels)."""
+    Each callback is shown once. After 'К заявке' show 'В работе: ПДО/Закупка (@login or id).'"""
     stage = StageCode(request["stage_code"])
     request_id = request["id"]
     seen: set[str] = set()
     buttons: list[list[InlineKeyboardButton]] = []
+    if stage == StageCode.PDO_PROCESSING:
+        label = _format_in_work_label("ПДО", taken_by_pdo)
+        buttons.append([InlineKeyboardButton(text=label, callback_data="noop")])
+    if stage == StageCode.PROCUREMENT_IN_WORK:
+        label = _format_in_work_label("Закупка", taken_by_proc)
+        buttons.append([InlineKeyboardButton(text=label, callback_data="noop")])
     for role in (Role.PDO, Role.PROCUREMENT, Role.FOREMAN, Role.MANAGER):
         for row in _buttons_for_role(request_id, stage, role):
-            # row is [InlineKeyboardButton]; callback_data is unique per action
             cb = row[0].callback_data
             if cb and cb not in seen:
                 seen.add(cb)

@@ -7,7 +7,7 @@ from app.application.context import AppContext
 from app.application.dto import CreateRequestInput
 from app.application.use_cases import cancel_request, create_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
-from app.bot.keyboards.request_actions import request_actions_keyboard_group
+from app.bot.routers._publish import get_request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
@@ -114,7 +114,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await publish_request_event(
             ctx=ctx, publisher=publisher, chat_id=group_chat_id,
-            request=req, reply_markup=request_actions_keyboard_group(req),
+            request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
         )
         await call.answer("Повторная заявка создана")
 

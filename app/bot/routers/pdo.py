@@ -10,8 +10,8 @@ from app.application.use_cases import pdo_process_excel, take_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.keyboards.request_actions import request_actions_keyboard_group
-from app.bot.routers._publish import publish_container_event, publish_request_event
+from app.bot.routers._publish import get_request_actions_keyboard_group
+from app.bot.routers._publish import edit_request_message, publish_container_event, publish_request_event
 from app.bot.states import ActionInputStates
 from app.config import get_settings
 from app.domain.enums import Role
@@ -50,10 +50,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer(str(exc), show_alert=True)
             return
         if req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=group_chat_id,
-                request=req, reply_markup=request_actions_keyboard_group(req),
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=group_chat_id, message_id=call.message.message_id,
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
+            events = await ctx.requests.get_events(req["id"])
+            if events:
+                await ctx.requests.add_message_link(
+                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id,
+                )
         await call.answer("Заявка взята ПДО")
 
     # ── Template + Excel upload (group card → DM FSM) ─────────────────
@@ -137,7 +143,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         for item in created:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=item, reply_markup=request_actions_keyboard_group(item),
+                request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
             )
         await message.answer("Форма ПДО обработана", reply_markup=await _menu(message.from_user.id))
 

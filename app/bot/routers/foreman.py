@@ -17,7 +17,7 @@ from app.bot.keyboards.menus import (
     request_list_inline,
     request_view_inline,
 )
-from app.bot.keyboards.request_actions import request_actions_keyboard_group
+from app.bot.routers._publish import get_request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
@@ -217,7 +217,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             publisher=publisher,
             chat_id=target_chat_id,
             request=req,
-            reply_markup=request_actions_keyboard_group(req),
+            reply_markup=await get_request_actions_keyboard_group(ctx, req),
         )
         await message.answer(
             f"Заявка создана: {req['request_code']}",
@@ -449,7 +449,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         role = await _role(message.from_user.id)
         await publish_request_event(
             ctx=ctx, publisher=publisher, chat_id=updated["chat_id"],
-            request=updated, reply_markup=request_actions_keyboard_group(updated),
+            request=updated, reply_markup=await get_request_actions_keyboard_group(ctx, updated),
         )
         await message.answer(f"Заявка {code} обновлена", reply_markup=await _menu(message.from_user.id))
 
@@ -575,7 +575,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         role = await _role(message.from_user.id)
         await publish_request_event(
             ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-            request=req, reply_markup=request_actions_keyboard_group(req),
+            request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
         )
         await message.answer("Получение (частично) зафиксировано", reply_markup=await _menu(message.from_user.id))
 

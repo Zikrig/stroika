@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from app.application.context import AppContext
 from app.application.use_cases import manager_actions, pause_resume_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
-from app.bot.keyboards.request_actions import request_actions_keyboard_group
+from app.bot.routers._publish import get_request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
@@ -70,7 +70,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=request_actions_keyboard_group(req),
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
                 note=message.text or "", note_label="Комментарий руководителя",
             )
         await message.answer("Комментарий сохранён", reply_markup=await _menu(message.from_user.id))
@@ -102,7 +102,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=request_actions_keyboard_group(req),
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
                 note=message.text or "", note_label="Причина паузы",
             )
         await message.answer("Пауза установлена", reply_markup=await _menu(message.from_user.id))
@@ -134,7 +134,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=request_actions_keyboard_group(req),
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
                 note=message.text or "", note_label="Комментарий к снятию паузы",
             )
         await message.answer("Пауза снята", reply_markup=await _menu(message.from_user.id))
