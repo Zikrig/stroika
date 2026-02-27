@@ -1,6 +1,5 @@
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.filters.state import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -173,16 +172,5 @@ def get_router(ctx: AppContext) -> Router:
         await ctx.roles.set_global_role(call.from_user.id, role)
         await call.message.answer(f"Ваша роль обновлена: {role_title(role)}", reply_markup=private_admin_menu_inline())
         await call.answer("Роль сохранена")
-
-    @router.message(StateFilter(None), F.chat.type.in_({"group", "supergroup"}))
-    async def upsert_participants(message: Message) -> None:
-        if not message.from_user:
-            return
-        await ctx.roles.upsert_chat(message.chat.id, message.chat.title or "Объект")
-        await ctx.roles.upsert_user(
-            message.from_user.id,
-            message.from_user.username,
-            message.from_user.full_name,
-        )
 
     return router
