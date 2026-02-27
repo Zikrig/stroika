@@ -130,4 +130,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             )
         await message.answer("Форма ПДО обработана")
 
+    @router.message(ActionInputStates.waiting_pdo_excel)
+    async def pdo_excel_not_document(message: Message) -> None:
+        await message.answer(
+            "Ожидается файл Excel.\n"
+            "Отправьте документ (файл), а не текст/фото.",
+            reply_markup=cancel_inline(),
+        )
+
     return router

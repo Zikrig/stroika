@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -12,6 +14,9 @@ from app.bot.routers._publish import publish_request_event
 from app.bot.states import ActionInputStates, ForemanCreateStates, GroupMenuStates
 from app.domain.enums import Role
 from app.infrastructure.telegram.publisher import TelegramPublisher
+
+
+_log = logging.getLogger("bot.foreman")
 
 
 def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
@@ -75,12 +80,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     @router.callback_query(F.data == "group_menu:new")
     async def new_request(call: CallbackQuery, state: FSMContext) -> None:
+        _log.info("new_request CB: chat=%s user=%s", call.message.chat.id, call.from_user.id)
         role = await _role(call.message.chat.id, call.from_user.id)
+        _log.info("new_request: role=%s", role)
         if role != Role.FOREMAN:
             await call.answer("Действие доступно только роли Прораб", show_alert=True)
             return
         await state.set_state(ForemanCreateStates.waiting_description)
         await state.update_data(description_parts=[], attachments=[])
+        cur = await state.get_state()
+        _log.info("new_request: state set to %s, data=%s", cur, await state.get_data())
         await call.message.answer(
             "Шаг 1/4. Отправьте описание потребности.\n"
             "Можно прислать текст, фото, голосовое или файл.",
@@ -90,9 +99,19 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     @router.message(ForemanCreateStates.waiting_description)
     async def create_step_description(message: Message, state: FSMContext) -> None:
+        _log.info(
+            "create_step_description ENTERED: chat=%s user=%s content_type=%s text=%r",
+            message.chat.id, getattr(message.from_user, "id", "?"),
+            message.content_type, (message.text or message.caption or "")[:80],
+        )
+        cur_state = await state.get_state()
+        cur_data = await state.get_data()
+        _log.info("create_step_description: state=%s data=%s", cur_state, cur_data)
         description = (message.text or message.caption or "").strip()
         attachments = _extract_attachments(message)
+        _log.info("create_step_description: extracted desc=%r attachments=%d", description[:60] if description else "", len(attachments))
         if not description and not attachments:
+            _log.info("create_step_description: EMPTY input, asking again")
             await message.answer(
                 "Я вас жду на шаге описания.\n"
                 "Отправьте текст или вложение.\n"
@@ -107,6 +126,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             description_parts.append(description)
         existing_attachments.extend(attachments)
         await state.update_data(description_parts=description_parts, attachments=existing_attachments)
+        _log.info("create_step_description: saved parts=%d attach=%d", len(description_parts), len(existing_attachments))
 
         if attachments and not description:
             text = "Вложение принято. Что-то еще или переходим к следующему шагу?"
@@ -128,9 +148,11 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     @router.callback_query(ForemanCreateStates.waiting_description, F.data == "newreq_next")
     async def newreq_next(call: CallbackQuery, state: FSMContext) -> None:
         data = await state.get_data()
+        _log.info("newreq_next: state=%s data=%s", await state.get_state(), data)
         description_parts = list(data.get("description_parts", []))
         attachments = list(data.get("attachments", []))
         if not description_parts and not attachments:
+            _log.warning("newreq_next: EMPTY parts and attachments — blocking")
             await call.answer("Сначала отправьте текст или вложение", show_alert=True)
             return
         await state.update_data(
