@@ -17,6 +17,7 @@ from app.bot.keyboards.menus import (
     request_list_inline,
     request_view_inline,
 )
+from app.bot.formatters.request_card import _fmt_date
 from app.bot.routers._publish import get_request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
@@ -523,7 +524,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                     return
                 lines = [f"История {code}:"]
                 for e in events:
-                    created = str(e.get("created_at") or "-")
+                    created = _fmt_date(e.get("created_at"))
                     lines.append(f"- {created} | {e['event_type']} | вложений: {e.get('attachments_count', 0)}")
                 await message.answer("\n".join(lines), reply_markup=await _menu(message.from_user.id))
                 return

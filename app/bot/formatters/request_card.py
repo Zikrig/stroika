@@ -1,7 +1,35 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime
+
 from app.domain.enums import EventType, StageCode, StatusCode
 from app.domain.services.role_guard import role_title
+
+# ISO datetime: 2026-02-27T23:01:11.819762+00:00 или 2026-02-27 23:01:11
+_ISO_DT = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+
+
+def _fmt_date(value: object) -> str:
+    """Format ISO or date string as DD.MM.YYYY HH:MM or DD.MM.YYYY if date-only."""
+    if value is None:
+        return "-"
+    s = str(value).strip()
+    if not s:
+        return "-"
+    m = _ISO_DT.match(s)
+    if m:
+        y, mo, d, h, mi, sec = m.groups()
+        sec = (sec or "0").split(".")[0]
+        return f"{int(d):02d}.{int(mo):02d}.{int(y)} {int(h):02d}:{int(mi):02d}"
+    try:
+        part = s.split()[0] if s else ""
+        dt = datetime.strptime(part, "%Y-%m-%d")
+        return dt.strftime("%d.%m.%Y")
+    except (ValueError, TypeError):
+        return s[:16] if len(s) > 16 else s
 
 
 _STATUS_TITLES = {
@@ -57,12 +85,12 @@ def _latest_procurement_dates(events: list[dict] | None) -> tuple[str, str, str]
         payload = event.get("payload_json") or {}
         event_type = event.get("event_type")
         if event_type == EventType.PURCHASED.value and payload.get("eta_shipping"):
-            eta_shipping = str(payload["eta_shipping"])
+            eta_shipping = _fmt_date(payload["eta_shipping"])
         if event_type == EventType.SHIPPED.value:
             if payload.get("eta_arrival"):
-                eta_arrival = str(payload["eta_arrival"])
+                eta_arrival = _fmt_date(payload["eta_arrival"])
             if event.get("created_at"):
-                shipped_at = str(event["created_at"]).split("T")[0]
+                shipped_at = _fmt_date(event["created_at"])
     return eta_shipping, shipped_at, eta_arrival
 
 
@@ -102,7 +130,7 @@ def render_request_card(
         f"🔢 Код 1С: {request.get('code_1c') or '-'}",
         f"📏 Запрошено: {_fmt_qty(request.get('requested_qty'))} {unit}".rstrip(),
         f"📅 Требуется до: {request.get('need_by') or '-'}",
-        f"🕒 Дата создания: {request.get('created_at') or '-'}",
+        f"🕒 Дата создания: {_fmt_date(request.get('created_at'))}",
         (
             "📎 Вложения: -"
             if not attachments_summary or not attachments_summary.get("total")
@@ -141,7 +169,7 @@ def render_container_card(container: dict, child_codes: list[str]) -> str:
         f"📦 КОНТЕЙНЕР {container.get('request_code', '-')}",
         f"🏗 Объект: {container.get('object_name') or '-'}",
         f"🎯 Подобъект: {container.get('subobject_name') or '-'}",
-        f"🕒 Дата создания: {container.get('created_at') or '-'}",
+        f"🕒 Дата создания: {_fmt_date(container.get('created_at'))}",
         "",
         "Разбит ПДО на заявки:",
     ]
