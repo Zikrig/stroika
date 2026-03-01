@@ -2,6 +2,7 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -175,13 +176,24 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await state.clear()
         role = await _role(message.from_user.id)
-        await publish_request_event(
-            ctx=ctx,
-            publisher=publisher,
-            chat_id=target_chat_id,
-            request=req,
-            reply_markup=await get_request_actions_keyboard_group(ctx, req),
-        )
+        try:
+            await publish_request_event(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request=req,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
+            )
+        except TelegramBadRequest as e:
+            if "chat not found" in (e.message or "").lower():
+                _log.warning("Group chat not found for GROUP_CHAT_ID=%s: %s", target_chat_id, e)
+                await message.answer(
+                    f"Заявка {req['request_code']} создана, но не удалось отправить карточку в группу.\n"
+                    "Проверьте GROUP_CHAT_ID в .env и что бот добавлен в группу.",
+                    reply_markup=await _menu(message.from_user.id),
+                )
+                return
+            raise
         await message.answer(
             f"Заявка создана: {req['request_code']}",
             reply_markup=await _menu(message.from_user.id),
