@@ -48,3 +48,17 @@ class TelegramPublisher:
             text=text,
             reply_markup=reply_markup,
         )
+
+    async def edit_message_caption(
+        self,
+        chat_id: int,
+        message_id: int,
+        caption: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
+        await self.bot.edit_message_caption(
+            chat_id=chat_id,
+            message_id=message_id,
+            caption=caption,
+            reply_markup=reply_markup,
+        )

@@ -61,36 +61,44 @@ async def publish_request_event(
     note: str | None = None,
     note_label: str = "Комментарий",
 ) -> int:
-    """Publish or update request card in group. Prefer editing existing message if any."""
+    """Publish or update request card in group. One message: text or photo+caption. Prefer edit if exists."""
     text = await _request_card_text(ctx, request, note=note, note_label=note_label)
-    existing_message_id = await ctx.requests.get_latest_message_id(request["id"], chat_id)
-    if existing_message_id is not None:
-        await publisher.edit_message(
-            chat_id=chat_id,
-            message_id=existing_message_id,
-            text=text,
-            reply_markup=reply_markup,
-        )
+    existing = await ctx.requests.get_latest_message_info(request["id"], chat_id)
+    if existing is not None:
+        msg_id = existing["message_id"]
+        content_type = existing["content_type"]
+        if content_type == "photo":
+            await publisher.edit_message_caption(
+                chat_id=chat_id, message_id=msg_id, caption=text, reply_markup=reply_markup,
+            )
+        else:
+            await publisher.edit_message(
+                chat_id=chat_id, message_id=msg_id, text=text, reply_markup=reply_markup,
+            )
         events = await ctx.requests.get_events(request["id"])
         if events:
             await ctx.requests.add_message_link(
-                request["id"], events[-1]["id"], chat_id, existing_message_id
+                request["id"], events[-1]["id"], chat_id, msg_id, content_type=content_type,
             )
-        return existing_message_id
-    message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=reply_markup)
-    events = await ctx.requests.get_events(request["id"])
-    if events:
-        await ctx.requests.add_message_link(request["id"], events[-1]["id"], chat_id, message_id)
-    # Только при первой публикации: отправить вложения заявки в группу (сразу под карточкой)
+        return msg_id
     attachments = await ctx.requests.list_attachments(request["id"])
     photo_file_ids = [a["file_id"] for a in attachments if a.get("attachment_type") == "photo" and a.get("file_id")]
     if photo_file_ids:
-        try:
-            await publisher.send_media_group_photos(
-                chat_id=chat_id, file_ids=photo_file_ids, caption="Фото к заявке",
-            )
-        except Exception:
-            pass
+        message_id = await publisher.send_photo(
+            chat_id=chat_id,
+            photo=photo_file_ids[0],
+            caption=text,
+            reply_markup=reply_markup,
+        )
+        content_type = "photo"
+    else:
+        message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=reply_markup)
+        content_type = "text"
+    events = await ctx.requests.get_events(request["id"])
+    if events:
+        await ctx.requests.add_message_link(
+            request["id"], events[-1]["id"], chat_id, message_id, content_type=content_type,
+        )
     return message_id
 
 
@@ -104,11 +112,18 @@ async def edit_request_message(
     note: str | None = None,
     note_label: str = "Комментарий",
 ) -> None:
-    """Update existing group message with new card and keyboard (no new message)."""
+    """Update existing group message with new card and keyboard. Uses caption if message is photo."""
     text = await _request_card_text(ctx, request, note=note, note_label=note_label)
-    await publisher.edit_message(
-        chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup,
-    )
+    info = await ctx.requests.get_latest_message_info(request["id"], chat_id)
+    content_type = (info["content_type"] if info and info["message_id"] == message_id else "text")
+    if content_type == "photo":
+        await publisher.edit_message_caption(
+            chat_id=chat_id, message_id=message_id, caption=text, reply_markup=reply_markup,
+        )
+    else:
+        await publisher.edit_message(
+            chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup,
+        )
 
 
 async def publish_container_event(

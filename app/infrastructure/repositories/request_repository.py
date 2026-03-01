@@ -279,26 +279,40 @@ class RequestRepository:
         finally:
             await conn.close()
 
-    async def add_message_link(self, request_id: str, event_id: str, chat_id: int, message_id: int) -> None:
+    async def add_message_link(
+        self,
+        request_id: str,
+        event_id: str,
+        chat_id: int,
+        message_id: int,
+        content_type: str = "text",
+    ) -> None:
         conn = await self.db.connect()
         try:
             await conn.execute(
                 """
-                INSERT INTO request_messages(request_id, event_id, chat_id, message_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO request_messages(request_id, event_id, chat_id, message_id, content_type)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (request_id, event_id, chat_id, message_id),
+                (request_id, event_id, chat_id, message_id, content_type),
             )
             await conn.commit()
         finally:
             await conn.close()
 
     async def get_latest_message_id(self, request_id: str, chat_id: int) -> int | None:
+        info = await self.get_latest_message_info(request_id, chat_id)
+        return info["message_id"] if info else None
+
+    async def get_latest_message_info(
+        self, request_id: str, chat_id: int
+    ) -> dict[str, Any] | None:
+        """Return {message_id, content_type} for the latest message or None."""
         conn = await self.db.connect()
         try:
             cur = await conn.execute(
                 """
-                SELECT message_id
+                SELECT message_id, content_type
                 FROM request_messages
                 WHERE request_id=? AND chat_id=?
                 ORDER BY created_at DESC, id DESC
@@ -309,7 +323,11 @@ class RequestRepository:
             row = await cur.fetchone()
             if row is None:
                 return None
-            return int(row["message_id"])
+            row_dict = dict(row)
+            return {
+                "message_id": int(row_dict["message_id"]),
+                "content_type": row_dict.get("content_type") or "text",
+            }
         finally:
             await conn.close()
 

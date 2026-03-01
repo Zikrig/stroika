@@ -53,8 +53,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             )
             events = await ctx.requests.get_events(req["id"])
             if events:
+                info = await ctx.requests.get_latest_message_info(req["id"], group_chat_id)
+                ct = (info["content_type"] if info else "text")
                 await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id,
+                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
                 )
         await call.answer("Заявка взята в работу")
 
