@@ -38,7 +38,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             source_message_id=call.message.message_id,
         )
         try:
-            await call.bot.send_message(call.from_user.id, prompt, reply_markup=cancel_inline())
+            msg = await call.bot.send_message(call.from_user.id, prompt, reply_markup=cancel_inline())
+            await p_state.update_data(prompt_message_id=msg.message_id)
         except Exception:
             await call.answer("Сначала напишите /start боту в личку", show_alert=True)
             await p_state.clear()
@@ -65,6 +66,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
         source_message_id = data.get("source_message_id")
+        prompt_message_id = data.get("prompt_message_id")
         req = await manager_actions.comment(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         await state.clear()
         if req and source_message_id is not None:
@@ -84,6 +86,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                 request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
                 note=message.text or "", note_label="Комментарий руководителя",
+            )
+        if prompt_message_id is not None:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id, message_id=prompt_message_id,
+                text="Комментарий принят.",
+                reply_markup=None,
             )
         await message.answer("Комментарий сохранён", reply_markup=await _menu(message.from_user.id))
 
@@ -106,6 +114,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
         source_message_id = data.get("source_message_id")
+        prompt_message_id = data.get("prompt_message_id")
         try:
             req = await pause_resume_request.pause(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
@@ -130,6 +139,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
                 note=message.text or "", note_label="Причина паузы",
             )
+        if prompt_message_id is not None:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id, message_id=prompt_message_id,
+                text="Пауза установлена.",
+                reply_markup=None,
+            )
         await message.answer("Пауза установлена", reply_markup=await _menu(message.from_user.id))
 
     # ── Resume ────────────────────────────────────────────────────────
@@ -151,6 +166,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
         source_message_id = data.get("source_message_id")
+        prompt_message_id = data.get("prompt_message_id")
         try:
             req = await pause_resume_request.resume(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
@@ -175,6 +191,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
                 note=message.text or "", note_label="Комментарий к снятию паузы",
             )
+        if prompt_message_id is not None:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id, message_id=prompt_message_id,
+                text="Пауза снята.",
+                reply_markup=None,
+            )
         await message.answer("Пауза снята", reply_markup=await _menu(message.from_user.id))
 
     # ── Terminate ─────────────────────────────────────────────────────
@@ -196,6 +218,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
         source_message_id = data.get("source_message_id")
+        prompt_message_id = data.get("prompt_message_id")
         req = await manager_actions.terminate(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         await state.clear()
         if req and source_message_id is not None:
@@ -215,6 +238,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                 request=req, reply_markup=None,
                 note=message.text or "", note_label="Причина прекращения",
+            )
+        if prompt_message_id is not None:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id, message_id=prompt_message_id,
+                text="Закупка прекращена.",
+                reply_markup=None,
             )
         await message.answer("Закупка прекращена", reply_markup=await _menu(message.from_user.id))
 
