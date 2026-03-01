@@ -122,13 +122,3 @@ class RoleRepository:
         finally:
             await conn.close()
 
-    async def list_chats(self) -> list[dict]:
-        conn = await self.db.connect()
-        try:
-            cur = await conn.execute(
-                "SELECT id, title, created_at FROM chats ORDER BY created_at DESC"
-            )
-            rows = await cur.fetchall()
-            return [dict(row) for row in rows]
-        finally:
-            await conn.close()

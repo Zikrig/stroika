@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     bot_token: str = Field(alias="BOT_TOKEN")
+    group_chat_id: int = Field(alias="GROUP_CHAT_ID")
+    group_title: str = Field(default="Объект", alias="GROUP_TITLE")
     database_path: str = Field(default="data/app.db", alias="DATABASE_PATH")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     tz: str = Field(default="Europe/Moscow", alias="TZ")

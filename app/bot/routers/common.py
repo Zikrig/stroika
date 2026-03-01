@@ -10,7 +10,7 @@ from app.bot.keyboards.menus import (
     role_picker_inline,
 )
 from app.bot.routers._helpers import private_fsm
-from app.bot.states import AdminAddObjectStates, RoleOnboardingStates
+from app.bot.states import RoleOnboardingStates
 from app.config import get_settings
 from app.domain.enums import Role
 from app.domain.services.role_guard import role_title
@@ -46,51 +46,6 @@ def get_router(ctx: AppContext) -> Router:
         role_text = "не назначена" if role is None else role_title(role)
         await message.answer(
             f"Ваша роль: {role_text}",
-            reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(message.from_user.id)),
-        )
-
-    # ── /add (group — register object) ───────────────────────────────
-    @router.message(Command("add"), F.chat.type.in_({"group", "supergroup"}))
-    async def add_object(message: Message, state: FSMContext) -> None:
-        chat_id = message.chat.id
-        default_title = message.chat.title or "Объект"
-        await ctx.roles.upsert_chat(chat_id, default_title)
-
-        p_state = private_fsm(state, message.bot.id, message.from_user.id)
-        await p_state.set_state(AdminAddObjectStates.waiting_object_name)
-        await p_state.update_data(target_chat_id=chat_id)
-
-        try:
-            await message.bot.send_message(
-                message.from_user.id,
-                f"Группа зарегистрирована (id: {chat_id}).\n"
-                f"Текущее название: {default_title}\n\n"
-                "Введите название объекта:",
-            )
-        except Exception:
-            await message.answer(
-                "Не удалось написать в личку. "
-                "Сначала откройте ЛС с ботом и нажмите /start."
-            )
-            await p_state.clear()
-            return
-
-        await message.answer("Продолжите в личных сообщениях с ботом.")
-
-    # ── object naming (private, after /add) ───────────────────────────
-    @router.message(AdminAddObjectStates.waiting_object_name, F.chat.type == "private")
-    async def name_object(message: Message, state: FSMContext) -> None:
-        name = (message.text or "").strip()
-        if not name:
-            await message.answer("Введите непустое название объекта:")
-            return
-        data = await state.get_data()
-        chat_id = data["target_chat_id"]
-        await ctx.roles.upsert_chat(chat_id, name)
-        await state.clear()
-        role = await ctx.roles.get_global_role(message.from_user.id)
-        await message.answer(
-            f"Объект сохранён: «{name}» (группа {chat_id})",
             reply_markup=private_main_menu_inline(role=role, is_admin=_is_admin(message.from_user.id)),
         )
 

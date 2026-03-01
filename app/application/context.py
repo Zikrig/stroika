@@ -10,3 +10,5 @@ class AppContext:
     requests: RequestRepository
     roles: RoleRepository
     outbox: OutboxRepository
+    group_chat_id: int = 0
+    group_title: str = "Объект"

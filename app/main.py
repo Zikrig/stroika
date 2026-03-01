@@ -27,7 +27,14 @@ async def run() -> None:
     roles = RoleRepository(db)
     outbox = OutboxRepository(db)
     updates = UpdateRepository(db)
-    ctx = AppContext(requests=requests, roles=roles, outbox=outbox)
+    await roles.upsert_chat(settings.group_chat_id, settings.group_title)
+    ctx = AppContext(
+        requests=requests,
+        roles=roles,
+        outbox=outbox,
+        group_chat_id=settings.group_chat_id,
+        group_title=settings.group_title,
+    )
 
     bot = Bot(token=settings.bot_token)
     dp = create_dispatcher(bot, ctx)

@@ -12,7 +12,6 @@ from app.bot.keyboards.menus import (
     PAGE_SIZE,
     cancel_inline,
     new_request_description_inline,
-    object_picker_inline,
     private_main_menu_inline,
     request_list_inline,
     request_view_inline,
@@ -70,52 +69,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if role != Role.FOREMAN:
             await call.answer("Действие доступно только роли Прораб", show_alert=True)
             return
-        chats = await ctx.roles.list_chats()
-        if not chats:
-            await call.message.answer("Нет зарегистрированных объектов. Админ должен добавить группу командой /add.")
-            await call.answer()
-            return
-        if len(chats) == 1:
-            await state.set_state(ForemanCreateStates.waiting_description)
-            await state.update_data(
-                target_chat_id=chats[0]["id"],
-                object_name=chats[0]["title"],
-                description_parts=[],
-                attachments=[],
-            )
-            await call.message.answer(
-                f"Объект: {chats[0]['title']}\n\n"
-                "Шаг 1/4. Отправьте описание потребности.\n"
-                "Можно прислать текст, фото, голосовое или файл.",
-                reply_markup=new_request_description_inline(),
-            )
-            await call.answer()
-            return
-        await state.set_state(ForemanCreateStates.waiting_object_selection)
-        await call.message.answer(
-            "Выберите объект:",
-            reply_markup=object_picker_inline(chats, "pick_obj_new"),
-        )
-        await call.answer()
-
-    @router.callback_query(
-        ForemanCreateStates.waiting_object_selection,
-        F.data.startswith("pick_obj_new:"),
-    )
-    async def pick_object_for_new(call: CallbackQuery, state: FSMContext) -> None:
-        chat_id = int(call.data.split(":", maxsplit=1)[1])
-        chats = await ctx.roles.list_chats()
-        obj = next((c for c in chats if c["id"] == chat_id), None)
-        title = obj["title"] if obj else "Объект"
         await state.set_state(ForemanCreateStates.waiting_description)
         await state.update_data(
-            target_chat_id=chat_id,
-            object_name=title,
+            target_chat_id=ctx.group_chat_id,
+            object_name=ctx.group_title,
             description_parts=[],
             attachments=[],
         )
         await call.message.answer(
-            f"Объект: {title}\n\n"
+            f"Объект: {ctx.group_title}\n\n"
             "Шаг 1/4. Отправьте описание потребности.\n"
             "Можно прислать текст, фото, голосовое или файл.",
             reply_markup=new_request_description_inline(),
@@ -269,21 +231,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await _send_request_page(call.message, call.from_user.id, archived=False, page=0)
             await call.answer()
             return
-        chats = await ctx.roles.list_chats()
-        if not chats:
-            await call.message.answer("Нет объектов.", reply_markup=await _menu(call.from_user.id))
-            await call.answer()
-            return
-        if len(chats) == 1:
-            await _send_request_page_by_chat(
-                call.message, chats[0]["id"], call.from_user.id, archived=False, page=0,
-            )
-            await call.answer()
-            return
-        await state.set_state(GroupMenuStates.waiting_object_for_active)
-        await call.message.answer(
-            "Выберите объект:",
-            reply_markup=object_picker_inline(chats, "pick_obj_active"),
+        await _send_request_page_by_chat(
+            call.message, ctx.group_chat_id, call.from_user.id, archived=False, page=0,
         )
         await call.answer()
 
@@ -295,45 +244,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await _send_request_page(call.message, call.from_user.id, archived=True, page=0)
             await call.answer()
             return
-        chats = await ctx.roles.list_chats()
-        if not chats:
-            await call.message.answer("Нет объектов.", reply_markup=await _menu(call.from_user.id))
-            await call.answer()
-            return
-        if len(chats) == 1:
-            await _send_request_page_by_chat(
-                call.message, chats[0]["id"], call.from_user.id, archived=True, page=0,
-            )
-            await call.answer()
-            return
-        await state.set_state(GroupMenuStates.waiting_object_for_archive)
-        await call.message.answer(
-            "Выберите объект:",
-            reply_markup=object_picker_inline(chats, "pick_obj_archive"),
-        )
-        await call.answer()
-
-    @router.callback_query(
-        GroupMenuStates.waiting_object_for_active,
-        F.data.startswith("pick_obj_active:"),
-    )
-    async def pick_obj_active(call: CallbackQuery, state: FSMContext) -> None:
-        await state.clear()
-        chat_id = int(call.data.split(":", maxsplit=1)[1])
         await _send_request_page_by_chat(
-            call.message, chat_id, call.from_user.id, archived=False, page=0,
-        )
-        await call.answer()
-
-    @router.callback_query(
-        GroupMenuStates.waiting_object_for_archive,
-        F.data.startswith("pick_obj_archive:"),
-    )
-    async def pick_obj_archive(call: CallbackQuery, state: FSMContext) -> None:
-        await state.clear()
-        chat_id = int(call.data.split(":", maxsplit=1)[1])
-        await _send_request_page_by_chat(
-            call.message, chat_id, call.from_user.id, archived=True, page=0,
+            call.message, ctx.group_chat_id, call.from_user.id, archived=True, page=0,
         )
         await call.answer()
 
@@ -493,12 +405,11 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def search_input(message: Message, state: FSMContext) -> None:
         query = (message.text or "").strip()
         await state.clear()
-        chats = await ctx.roles.list_chats()
-        all_items: list[str] = []
-        for chat in chats:
-            items = await ctx.requests.list_requests(chat["id"], archived=False, search=query)
-            for i in items:
-                all_items.append(f"{i['request_code']} | {i.get('nomenclature_1c') or i.get('name_from_foreman') or '-'}")
+        items = await ctx.requests.list_requests(ctx.group_chat_id, archived=False, search=query)
+        all_items = [
+            f"{i['request_code']} | {i.get('nomenclature_1c') or i.get('name_from_foreman') or '-'}"
+            for i in items
+        ]
         if not all_items:
             await message.answer("Ничего не найдено", reply_markup=await _menu(message.from_user.id))
             return
@@ -514,20 +425,18 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def history_input(message: Message, state: FSMContext) -> None:
         code = (message.text or "").strip()
         await state.clear()
-        chats = await ctx.roles.list_chats()
-        for chat in chats:
-            request = await ctx.requests.get_request_by_code(chat["id"], code)
-            if request:
-                events = await ctx.requests.get_events_with_attachment_counts(request["id"])
-                if not events:
-                    await message.answer("История пока пустая", reply_markup=await _menu(message.from_user.id))
-                    return
-                lines = [f"История {code}:"]
-                for e in events:
-                    created = _fmt_date(e.get("created_at"))
-                    lines.append(f"- {created} | {e['event_type']} | вложений: {e.get('attachments_count', 0)}")
-                await message.answer("\n".join(lines), reply_markup=await _menu(message.from_user.id))
+        request = await ctx.requests.get_request_by_code(ctx.group_chat_id, code)
+        if request:
+            events = await ctx.requests.get_events_with_attachment_counts(request["id"])
+            if not events:
+                await message.answer("История пока пустая", reply_markup=await _menu(message.from_user.id))
                 return
+            lines = [f"История {code}:"]
+            for e in events:
+                created = _fmt_date(e.get("created_at"))
+                lines.append(f"- {created} | {e['event_type']} | вложений: {e.get('attachments_count', 0)}")
+            await message.answer("\n".join(lines), reply_markup=await _menu(message.from_user.id))
+            return
         await message.answer("Заявка не найдена", reply_markup=await _menu(message.from_user.id))
 
     # ── Received partial / full (group card callbacks → DM) ───────────

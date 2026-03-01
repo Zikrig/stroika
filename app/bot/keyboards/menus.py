@@ -54,19 +54,6 @@ def private_main_menu_inline(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def object_picker_inline(chats: list[dict], callback_prefix: str) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for chat in chats:
-        rows.append([
-            InlineKeyboardButton(
-                text=chat["title"],
-                callback_data=f"{callback_prefix}:{chat['id']}",
-            )
-        ])
-    rows.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def request_list_inline(
     items: list[dict],
     page: int,
