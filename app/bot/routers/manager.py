@@ -6,10 +6,9 @@ from aiogram.types import CallbackQuery, Message
 from app.application.context import AppContext
 from app.application.use_cases import manager_actions, pause_resume_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
-from app.bot.routers._publish import get_request_actions_keyboard_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import publish_request_event
+from app.bot.routers._publish import edit_request_message, get_request_actions_keyboard_group, publish_request_event
 from app.bot.states import ActionInputStates
 from app.config import get_settings
 from app.domain.enums import Role
@@ -65,9 +64,22 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def comment_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         req = await manager_actions.comment(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         await state.clear()
-        if req:
+        if req and source_message_id is not None:
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=target_chat_id, message_id=source_message_id,
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+                note=message.text or "", note_label="Комментарий руководителя",
+            )
+            events = await ctx.requests.get_events(req["id"])
+            if events:
+                await ctx.requests.add_message_link(
+                    req["id"], events[-1]["id"], target_chat_id, source_message_id,
+                )
+        elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                 request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
@@ -93,13 +105,26 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def pause_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         try:
             req = await pause_resume_request.pause(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
             await message.answer(str(exc))
             return
         await state.clear()
-        if req:
+        if req and source_message_id is not None:
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=target_chat_id, message_id=source_message_id,
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+                note=message.text or "", note_label="Причина паузы",
+            )
+            events = await ctx.requests.get_events(req["id"])
+            if events:
+                await ctx.requests.add_message_link(
+                    req["id"], events[-1]["id"], target_chat_id, source_message_id,
+                )
+        elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                 request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
@@ -125,13 +150,26 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def resume_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         try:
             req = await pause_resume_request.resume(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
             await message.answer(str(exc))
             return
         await state.clear()
-        if req:
+        if req and source_message_id is not None:
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=target_chat_id, message_id=source_message_id,
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+                note=message.text or "", note_label="Комментарий к снятию паузы",
+            )
+            events = await ctx.requests.get_events(req["id"])
+            if events:
+                await ctx.requests.add_message_link(
+                    req["id"], events[-1]["id"], target_chat_id, source_message_id,
+                )
+        elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                 request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
@@ -157,9 +195,22 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def terminate_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         req = await manager_actions.terminate(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         await state.clear()
-        if req:
+        if req and source_message_id is not None:
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=target_chat_id, message_id=source_message_id,
+                request=req, reply_markup=None,
+                note=message.text or "", note_label="Причина прекращения",
+            )
+            events = await ctx.requests.get_events(req["id"])
+            if events:
+                await ctx.requests.add_message_link(
+                    req["id"], events[-1]["id"], target_chat_id, source_message_id,
+                )
+        elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                 request=req, reply_markup=None,
