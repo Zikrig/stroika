@@ -61,21 +61,26 @@ async def publish_request_event(
     note: str | None = None,
     note_label: str = "Комментарий",
 ) -> int:
+    """Publish or update request card in group. Prefer editing existing message if any."""
     text = await _request_card_text(ctx, request, note=note, note_label=note_label)
+    existing_message_id = await ctx.requests.get_latest_message_id(request["id"], chat_id)
+    if existing_message_id is not None:
+        await publisher.edit_message(
+            chat_id=chat_id,
+            message_id=existing_message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+        events = await ctx.requests.get_events(request["id"])
+        if events:
+            await ctx.requests.add_message_link(
+                request["id"], events[-1]["id"], chat_id, existing_message_id
+            )
+        return existing_message_id
     message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=reply_markup)
     events = await ctx.requests.get_events(request["id"])
     if events:
         await ctx.requests.add_message_link(request["id"], events[-1]["id"], chat_id, message_id)
-    # Отправить фото заявки в группу (сразу под карточкой)
-    attachments = await ctx.requests.list_attachments(request["id"])
-    photo_file_ids = [a["file_id"] for a in attachments if a.get("attachment_type") == "photo" and a.get("file_id")]
-    if photo_file_ids:
-        try:
-            await publisher.send_media_group_photos(
-                chat_id=chat_id, file_ids=photo_file_ids, caption="Фото к заявке"
-            )
-        except Exception:
-            pass
     return message_id
 
 

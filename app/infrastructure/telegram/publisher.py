@@ -30,11 +30,6 @@ class TelegramPublisher:
     ) -> None:
         if not file_ids:
             return
-        if len(file_ids) == 1:
-            await self.bot.send_photo(
-                chat_id=chat_id, photo=file_ids[0], caption=caption or "Фото к заявке"
-            )
-            return
         media = [InputMediaPhoto(media=fid) for fid in file_ids[:10]]
         if caption:
             media[0].caption = caption
