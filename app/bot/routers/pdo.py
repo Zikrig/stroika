@@ -10,8 +10,12 @@ from app.application.use_cases import pdo_process_excel, take_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import get_request_actions_keyboard_group
-from app.bot.routers._publish import edit_request_message, publish_container_event, publish_request_event
+from app.bot.routers._publish import (
+    edit_request_message,
+    get_request_actions_keyboard_group,
+    publish_container_event,
+    publish_request_event,
+)
 from app.bot.states import ActionInputStates
 from app.config import get_settings
 from app.domain.enums import Role
@@ -130,21 +134,34 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         except ValueError as exc:
             await message.answer(str(exc))
             return
+        source_message_id = data.get("source_message_id")
         await state.clear()
 
-        if len(created) > 1:
-            parent = await ctx.requests.get_request(request_id)
-            if parent:
-                await publish_container_event(
-                    ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                    container=parent, child_codes=[item["request_code"] for item in created],
-                )
-
-        for item in created:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+        if len(created) == 1 and source_message_id is not None:
+            item = created[0]
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=target_chat_id, message_id=source_message_id,
                 request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
             )
+            events = await ctx.requests.get_events(item["id"])
+            if events:
+                await ctx.requests.add_message_link(
+                    item["id"], events[-1]["id"], target_chat_id, source_message_id,
+                )
+        else:
+            if len(created) > 1:
+                parent = await ctx.requests.get_request(request_id)
+                if parent:
+                    await publish_container_event(
+                        ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                        container=parent, child_codes=[item["request_code"] for item in created],
+                    )
+            for item in created:
+                await publish_request_event(
+                    ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                    request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
+                )
         await message.answer("Форма ПДО обработана", reply_markup=await _menu(message.from_user.id))
 
     @router.message(ActionInputStates.waiting_pdo_excel, F.chat.type == "private")
