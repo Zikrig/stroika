@@ -91,11 +91,15 @@ async def publish_request_event(
             reply_markup=reply_markup,
         )
         content_type = "photo"
-        if len(photo_file_ids) > 1:
+        rest_photos = photo_file_ids[1:10]
+        if len(rest_photos) == 1:
             try:
-                await publisher.send_media_group_photos(
-                    chat_id=chat_id, file_ids=photo_file_ids[1:10],
-                )
+                await publisher.send_photo(chat_id=chat_id, photo=rest_photos[0])
+            except Exception:
+                pass
+        elif len(rest_photos) >= 2:
+            try:
+                await publisher.send_media_group_photos(chat_id=chat_id, file_ids=rest_photos)
             except Exception:
                 pass
     else:
