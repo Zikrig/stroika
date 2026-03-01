@@ -81,6 +81,16 @@ async def publish_request_event(
     events = await ctx.requests.get_events(request["id"])
     if events:
         await ctx.requests.add_message_link(request["id"], events[-1]["id"], chat_id, message_id)
+    # Только при первой публикации: отправить вложения заявки в группу (сразу под карточкой)
+    attachments = await ctx.requests.list_attachments(request["id"])
+    photo_file_ids = [a["file_id"] for a in attachments if a.get("attachment_type") == "photo" and a.get("file_id")]
+    if photo_file_ids:
+        try:
+            await publisher.send_media_group_photos(
+                chat_id=chat_id, file_ids=photo_file_ids, caption="Фото к заявке",
+            )
+        except Exception:
+            pass
     return message_id
 
 
