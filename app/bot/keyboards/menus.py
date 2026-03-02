@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.domain.services.role_guard import role_emoji, role_title
+
 if TYPE_CHECKING:
     from app.domain.enums import Role
 
@@ -45,7 +47,8 @@ def private_main_menu_inline(
         ],
     ]
     if role == Role.FOREMAN:
-        rows.insert(0, [InlineKeyboardButton(text="Новая заявка", callback_data="pm:new_request")])
+        foreman_emoji = role_emoji(Role.FOREMAN)
+        rows.insert(0, [InlineKeyboardButton(text=f"{foreman_emoji} Новая заявка", callback_data="pm:new_request")])
     if is_admin:
         rows.append([
             InlineKeyboardButton(text="Сменить мою роль", callback_data="admin_menu:set_my_role"),
@@ -108,12 +111,14 @@ def request_view_inline(
 
 
 def role_picker_inline() -> InlineKeyboardMarkup:
+    from app.domain.enums import Role
+
     roles = [
-        ("Прораб", "foreman"),
-        ("ПДО", "pdo"),
-        ("Закупка", "procurement"),
-        ("Руководитель", "manager"),
-        ("Зритель", "viewer"),
+        (role_title(Role.FOREMAN), "foreman"),
+        (role_title(Role.PDO), "pdo"),
+        (role_title(Role.PROCUREMENT), "procurement"),
+        (role_title(Role.MANAGER), "manager"),
+        (role_title(Role.VIEWER), "viewer"),
     ]
     rows = [[InlineKeyboardButton(text=title, callback_data=f"pick_role:{code}")] for title, code in roles]
     rows.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")])

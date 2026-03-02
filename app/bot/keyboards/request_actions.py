@@ -1,40 +1,70 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.domain.enums import Role, StageCode
+from app.domain.services.role_guard import role_emoji, role_title
 
 
 def _buttons_for_role(request_id: str, stage: StageCode, role: Role) -> list[list[InlineKeyboardButton]]:
     """Buttons for a single role at this stage (for DM or single-role use)."""
     out: list[list[InlineKeyboardButton]] = []
+    emoji = role_emoji(role)
     if role == Role.PDO and stage in {StageCode.CREATED, StageCode.PDO_PROCESSING}:
         if stage == StageCode.CREATED:
-            out.append([InlineKeyboardButton(text="К заявке", callback_data=f"take_pdo:{request_id}")])
-        out.append([InlineKeyboardButton(text="Загрузить форму ПДО", callback_data=f"pdo_template:{request_id}")])
-        out.append([InlineKeyboardButton(text="Отменить", callback_data=f"cancel:{request_id}")])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} К заявке", callback_data=f"take_pdo:{request_id}")
+            ])
+        out.append([
+            InlineKeyboardButton(text=f"{emoji} Загрузить форму ПДО", callback_data=f"pdo_template:{request_id}")
+        ])
+        out.append([InlineKeyboardButton(text=f"{emoji} Отменить", callback_data=f"cancel:{request_id}")])
     if role == Role.PROCUREMENT:
         if stage == StageCode.TRANSFERRED_TO_PROCUREMENT:
-            out.append([InlineKeyboardButton(text="К заявке", callback_data=f"take_proc:{request_id}")])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} К заявке", callback_data=f"take_proc:{request_id}")
+            ])
         if stage == StageCode.PROCUREMENT_IN_WORK:
-            out.append([InlineKeyboardButton(text="Закуплено", callback_data=f"purchased:{request_id}")])
-            out.append([InlineKeyboardButton(text="Вернуть ПДО", callback_data=f"return_pdo:{request_id}")])
-            out.append([InlineKeyboardButton(text="Отменить", callback_data=f"cancel:{request_id}")])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} Закуплено", callback_data=f"purchased:{request_id}")
+            ])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} Вернуть ПДО", callback_data=f"return_pdo:{request_id}")
+            ])
+            out.append([InlineKeyboardButton(text=f"{emoji} Отменить", callback_data=f"cancel:{request_id}")])
         if stage == StageCode.PURCHASED:
-            out.append([InlineKeyboardButton(text="Отгружено", callback_data=f"shipped:{request_id}")])
-            out.append([InlineKeyboardButton(text="Вернуть ПДО", callback_data=f"return_pdo:{request_id}")])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} Отгружено", callback_data=f"shipped:{request_id}")
+            ])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} Вернуть ПДО", callback_data=f"return_pdo:{request_id}")
+            ])
     if role == Role.FOREMAN:
         if stage in {StageCode.CREATED}:
-            out.append([InlineKeyboardButton(text="Отменить", callback_data=f"cancel:{request_id}")])
+            out.append([InlineKeyboardButton(text=f"{emoji} Отменить", callback_data=f"cancel:{request_id}")])
         if stage in {StageCode.SHIPPED, StageCode.PARTIALLY_RECEIVED}:
-            out.append([InlineKeyboardButton(text="Получено частично", callback_data=f"received_partial:{request_id}")])
-            out.append([InlineKeyboardButton(text="Получено полностью", callback_data=f"received_full:{request_id}")])
-            out.append([InlineKeyboardButton(text="Повторить заявку", callback_data=f"repeat:{request_id}")])
+            out.append([
+                InlineKeyboardButton(
+                    text=f"{emoji} Получено частично", callback_data=f"received_partial:{request_id}"
+                )
+            ])
+            out.append([
+                InlineKeyboardButton(
+                    text=f"{emoji} Получено полностью", callback_data=f"received_full:{request_id}"
+                )
+            ])
+            out.append([
+                InlineKeyboardButton(text=f"{emoji} Повторить заявку", callback_data=f"repeat:{request_id}")
+            ])
     if role == Role.MANAGER:
-        out.append([InlineKeyboardButton(text="Комментарий", callback_data=f"mgr_comment:{request_id}")])
+        out.append([
+            InlineKeyboardButton(text=f"{emoji} Комментарий", callback_data=f"mgr_comment:{request_id}")
+        ])
         if stage != StageCode.PAUSED:
-            out.append([InlineKeyboardButton(text="Пауза", callback_data=f"pause:{request_id}")])
+            out.append([InlineKeyboardButton(text=f"{emoji} Пауза", callback_data=f"pause:{request_id}")])
         else:
-            out.append([InlineKeyboardButton(text="Снять паузу", callback_data=f"resume:{request_id}")])
-        out.append([InlineKeyboardButton(text="Прекратить закупку", callback_data=f"terminate:{request_id}")])
+            out.append([InlineKeyboardButton(text=f"{emoji} Снять паузу", callback_data=f"resume:{request_id}")])
+        out.append([
+            InlineKeyboardButton(text=f"{emoji} Прекратить закупку", callback_data=f"terminate:{request_id}")
+        ])
     return out
 
 
@@ -73,10 +103,10 @@ def request_actions_keyboard_group(
     seen: set[str] = set()
     buttons: list[list[InlineKeyboardButton]] = []
     if stage == StageCode.PDO_PROCESSING:
-        label = _format_in_work_label("ПДО", taken_by_pdo)
+        label = _format_in_work_label(role_title(Role.PDO), taken_by_pdo)
         buttons.append([InlineKeyboardButton(text=label, callback_data="noop")])
     if stage == StageCode.PROCUREMENT_IN_WORK:
-        label = _format_in_work_label("Закупка", taken_by_proc)
+        label = _format_in_work_label(role_title(Role.PROCUREMENT), taken_by_proc)
         buttons.append([InlineKeyboardButton(text=label, callback_data="noop")])
     for role in (Role.PDO, Role.PROCUREMENT, Role.FOREMAN, Role.MANAGER):
         for row in _buttons_for_role(request_id, stage, role):
