@@ -150,8 +150,10 @@ def render_request_card(
             else f"👤 Ответственный: {role_title(request['responsible_role'])}"
         ),
         (
-            f"📦 Потребность: {_fmt_qty(request.get('requested_qty'))} / "
-            f"{_fmt_qty(request.get('from_stock_qty'))} / {_fmt_qty(request.get('to_purchase_qty'))} {unit}"
+            "📦 Потребность: "
+            f"Общая {_fmt_qty(request.get('requested_qty'))} / "
+            f"Со склада {_fmt_qty(request.get('from_stock_qty'))} / "
+            f"В закупку {_fmt_qty(request.get('to_purchase_qty'))} {unit}"
         ).rstrip(),
         f"🚚 Закупка: ETA отгрузки {eta_shipping} / Отгружено {shipped_at} / ETA на объект {eta_arrival}",
         (

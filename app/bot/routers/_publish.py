@@ -82,7 +82,9 @@ async def publish_request_event(
             )
         return msg_id
     attachments = await ctx.requests.list_attachments(request["id"])
-    photo_file_ids = [a["file_id"] for a in attachments if a.get("attachment_type") == "photo" and a.get("file_id")]
+    photo_file_ids = [
+        a["file_id"] for a in attachments if a.get("attachment_type") == "photo" and a.get("file_id")
+    ]
     if photo_file_ids:
         message_id = await publisher.send_photo(
             chat_id=chat_id,
@@ -105,6 +107,16 @@ async def publish_request_event(
     else:
         message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=reply_markup)
         content_type = "text"
+
+    # Дополнительно: отправить голосовые сообщения, если они есть (отдельными сообщениями)
+    voice_file_ids = [
+        a["file_id"] for a in attachments if a.get("attachment_type") == "voice" and a.get("file_id")
+    ]
+    for fid in voice_file_ids[:10]:
+        try:
+            await publisher.send_voice(chat_id=chat_id, voice=fid)
+        except Exception:
+            pass
     events = await ctx.requests.get_events(request["id"])
     if events:
         await ctx.requests.add_message_link(

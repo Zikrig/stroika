@@ -293,6 +293,11 @@ class RequestRepository:
                 """
                 INSERT INTO request_messages(request_id, event_id, chat_id, message_id, content_type)
                 VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                    request_id=excluded.request_id,
+                    event_id=excluded.event_id,
+                    content_type=excluded.content_type,
+                    created_at=CURRENT_TIMESTAMP
                 """,
                 (request_id, event_id, chat_id, message_id, content_type),
             )

@@ -35,6 +35,21 @@ class TelegramPublisher:
             media[0].caption = caption
         await self.bot.send_media_group(chat_id=chat_id, media=media)
 
+    async def send_voice(
+        self,
+        chat_id: int,
+        voice: str,
+        caption: str | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> int:
+        message = await self.bot.send_voice(
+            chat_id=chat_id,
+            voice=voice,
+            caption=caption,
+            reply_markup=reply_markup,
+        )
+        return message.message_id
+
     async def edit_message(
         self,
         chat_id: int,
