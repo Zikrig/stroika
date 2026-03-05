@@ -73,47 +73,108 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     @router.message(ActionInputStates.waiting_manager_comment, F.chat.type == "private")
     async def comment_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
-        target_chat_id = data["target_chat_id"]
+        target_chat_id = data.get("target_chat_id")
         source_message_id = data.get("source_message_id")
         prompt_message_id = data.get("prompt_message_id")
-        req = await manager_actions.comment(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
-        await state.clear()
-        if req and source_message_id is not None:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=target_chat_id, message_id=source_message_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                note=message.text or "", note_label="Комментарий руководителя",
+        request_id = data.get("target_request_id")
+        text = message.text or ""
+
+        # Если по каким-то причинам состояние потерялось или нет id заявки —
+        # не молчим, а даём понятную ошибку.
+        if not target_chat_id or not request_id:
+            await state.clear()
+            if prompt_message_id is not None:
+                try:
+                    await message.bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=prompt_message_id,
+                        text="Не удалось определить заявку, начните действие из карточки в группе заново.",
+                        reply_markup=None,
+                    )
+                except Exception:
+                    pass
+            await message.answer(
+                "Не удалось определить заявку, начните действие из карточки в группе заново.",
+                reply_markup=await _menu(message.from_user.id),
             )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], target_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
-                )
-            await publish_event_reply(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=target_chat_id,
-                request_id=req["id"],
-                root_message_id=source_message_id,
-                note=message.text or "",
-                note_label="Комментарий руководителя",
-            )
-        elif req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                note=message.text or "", note_label="Комментарий руководителя",
-            )
+            return
+
+        req: dict | None = None
+        error: str | None = None
+
+        try:
+            # 1) Пишем событие и обновляем карточку заявки / лог в группе.
+            req = await manager_actions.comment(ctx.requests, request_id, message.from_user.id, text)
+            await state.clear()
+            if req and source_message_id is not None:
+                try:
+                    await edit_request_message(
+                        ctx=ctx,
+                        publisher=publisher,
+                        chat_id=target_chat_id,
+                        message_id=source_message_id,
+                        request=req,
+                        reply_markup=await get_request_actions_keyboard_group(ctx, req),
+                        note=text,
+                        note_label="Комментарий руководителя",
+                    )
+                    events = await ctx.requests.get_events(req["id"])
+                    if events:
+                        info = await ctx.requests.get_latest_message_info(req["id"], target_chat_id)
+                        ct = (info["content_type"] if info else "text")
+                        await ctx.requests.add_message_link(
+                            req["id"],
+                            events[-1]["id"],
+                            target_chat_id,
+                            source_message_id,
+                            content_type=ct,
+                        )
+                    await publish_event_reply(
+                        ctx=ctx,
+                        publisher=publisher,
+                        chat_id=target_chat_id,
+                        request_id=req["id"],
+                        root_message_id=source_message_id,
+                        note=text,
+                        note_label="Комментарий руководителя",
+                    )
+                except Exception:
+                    # Если не смогли обновить карточку / лог в группе — всё равно
+                    # считаем комментарий принятым и отвечаем в личку.
+                    error = "Комментарий сохранён, но не удалось обновить сообщение в группе."
+            elif req:
+                try:
+                    await publish_request_event(
+                        ctx=ctx,
+                        publisher=publisher,
+                        chat_id=target_chat_id,
+                        request=req,
+                        reply_markup=await get_request_actions_keyboard_group(ctx, req),
+                        note=text,
+                        note_label="Комментарий руководителя",
+                    )
+                except Exception:
+                    error = "Комментарий сохранён, но не удалось обновить сообщение в группе."
+        except Exception:
+            error = "Не удалось сохранить комментарий, попробуйте ещё раз."
+
+        # 2) В любом случае стараемся закрыть диалоговое сообщение в личке.
         if prompt_message_id is not None:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Принято",
-                reply_markup=None,
-            )
-        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=prompt_message_id,
+                    text="Принято",
+                    reply_markup=None,
+                )
+            except Exception:
+                pass
+
+        # 3) Сообщение пользователю — всегда что‑то отправляем.
+        if error:
+            await message.answer(error, reply_markup=await _menu(message.from_user.id))
+        else:
+            await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
 
     # ── Pause ─────────────────────────────────────────────────────────
 
