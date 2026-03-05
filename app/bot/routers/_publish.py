@@ -190,14 +190,53 @@ async def publish_event_reply(
         # Для события создания заявки отдельное reply-сообщение не отправляем
         return
     text = _format_event_log_line({}, last, note=note, note_label=note_label)
-    message_id = await publisher.publish(
-        chat_id=chat_id,
-        text=text,
-        reply_to_message_id=root_message_id,
-    )
-    await ctx.requests.add_message_link(
-        request_id, last["id"], chat_id, message_id, content_type="text",
-    )
+    # Фото, привязанные к этому событию (например «Получено полностью» с фото поставки)
+    attachments = await ctx.requests.list_attachments(request_id, event_id=last["id"])
+    photo_file_ids = [
+        a["file_id"] for a in attachments
+        if a.get("attachment_type") == "photo" and a.get("file_id")
+    ]
+    if photo_file_ids:
+        # Отправляем первое фото с подписью = строка лога; остальные — альбомом или по одному
+        first_id = photo_file_ids[0]
+        message_id = await publisher.send_photo(
+            chat_id=chat_id,
+            photo=first_id,
+            caption=text,
+            reply_to_message_id=root_message_id,
+        )
+        await ctx.requests.add_message_link(
+            request_id, last["id"], chat_id, message_id, content_type="photo",
+        )
+        rest = photo_file_ids[1:10]
+        if len(rest) == 1:
+            try:
+                mid = await publisher.send_photo(
+                    chat_id=chat_id, photo=rest[0], reply_to_message_id=root_message_id,
+                )
+                await ctx.requests.add_message_link(
+                    request_id, last["id"], chat_id, mid, content_type="photo",
+                )
+            except Exception:
+                pass
+        elif len(rest) >= 2:
+            try:
+                await publisher.send_media_group_photos(
+                    chat_id=chat_id,
+                    file_ids=rest,
+                    reply_to_message_id=root_message_id,
+                )
+            except Exception:
+                pass
+    else:
+        message_id = await publisher.publish(
+            chat_id=chat_id,
+            text=text,
+            reply_to_message_id=root_message_id,
+        )
+        await ctx.requests.add_message_link(
+            request_id, last["id"], chat_id, message_id, content_type="text",
+        )
 
 
 async def publish_request_event(
