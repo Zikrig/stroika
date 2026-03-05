@@ -26,16 +26,21 @@ async def safe_update_request_in_group(
     """Обновляет карточку заявки в группе (редакт или публикация). Возвращает None при успехе, иначе строку ошибки (логирует исключение)."""
     try:
         if source_message_id is not None:
-            await edit_request_message(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=target_chat_id,
-                message_id=source_message_id,
-                request=request,
-                reply_markup=reply_markup,
-                note=note or None,
-                note_label=note_label,
-            )
+            try:
+                await edit_request_message(
+                    ctx=ctx,
+                    publisher=publisher,
+                    chat_id=target_chat_id,
+                    message_id=source_message_id,
+                    request=request,
+                    reply_markup=reply_markup,
+                    note=note or None,
+                    note_label=note_label,
+                )
+            except TelegramBadRequest as e:
+                if "message is not modified" not in (e.message or "").lower():
+                    raise
+                # Текст и клавиатура не изменились — редактирование не требуется
             events = await ctx.requests.get_events(request["id"])
             if events:
                 info = await ctx.requests.get_latest_message_info(request["id"], target_chat_id)
