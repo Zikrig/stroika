@@ -125,6 +125,9 @@ async def publish_event_reply(
     if not events:
         return
     last = events[-1]
+    if last.get("event_type") == EventType.REQUEST_CREATED.value:
+        # Для события создания заявки отдельное reply-сообщение не отправляем
+        return
     text = _format_event_log_line({}, last, note=note, note_label=note_label)
     message_id = await publisher.publish(
         chat_id=chat_id,
