@@ -89,6 +89,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def purchased_date(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         try:
             req = await mark_purchased.execute(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
@@ -101,6 +102,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 publisher=publisher,
                 request=req,
                 target_chat_id=target_chat_id,
+                source_message_id=source_message_id,
                 reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
             if err:
@@ -136,6 +138,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def shipped_date(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         try:
             req = await mark_shipped.execute(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
         except ValueError as exc:
@@ -148,6 +151,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 publisher=publisher,
                 request=req,
                 target_chat_id=target_chat_id,
+                source_message_id=source_message_id,
                 reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
             if err:

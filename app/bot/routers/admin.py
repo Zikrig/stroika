@@ -59,6 +59,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def cancel_input(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         target_chat_id = data["target_chat_id"]
+        source_message_id = data.get("source_message_id")
         role = Role(data["actor_role"])
         try:
             req = await cancel_request.execute(
@@ -78,6 +79,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 publisher=publisher,
                 request=req,
                 target_chat_id=target_chat_id,
+                source_message_id=source_message_id,
                 reply_markup=None,
                 note=message.text or "",
                 note_label="Причина отмены",
