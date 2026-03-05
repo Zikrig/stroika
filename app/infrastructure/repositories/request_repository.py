@@ -337,6 +337,27 @@ class RequestRepository:
         finally:
             await conn.close()
 
+    async def get_message_content_type(
+        self, request_id: str, chat_id: int, message_id: int
+    ) -> str:
+        """Return content_type for the given message (card or reply). Default 'text' if not found."""
+        conn = await self.db.connect()
+        try:
+            cur = await conn.execute(
+                """
+                SELECT content_type FROM request_messages
+                WHERE request_id=? AND chat_id=? AND message_id=?
+                LIMIT 1
+                """,
+                (request_id, chat_id, message_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return "text"
+            return row["content_type"] or "text"
+        finally:
+            await conn.close()
+
     async def get_events(self, request_id: str) -> list[dict[str, Any]]:
         conn = await self.db.connect()
         try:

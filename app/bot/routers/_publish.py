@@ -256,8 +256,10 @@ async def edit_request_message(
 ) -> None:
     """Update existing group message with new card and keyboard. Uses caption if message is photo."""
     text = await _request_card_text(ctx, request, note=note, note_label=note_label)
-    info = await ctx.requests.get_latest_message_info(request["id"], chat_id)
-    content_type = (info["content_type"] if info and info["message_id"] == message_id else "text")
+    # Тип контента берём именно для редактируемого сообщения (карточки), а не для
+    # "последнего" в логе — иначе последним может быть ответ (голос/текст) и мы вызовем
+    # edit_message_text для фото-карточки и получим "there is no text in the message to edit".
+    content_type = await ctx.requests.get_message_content_type(request["id"], chat_id, message_id)
     if content_type == "photo":
         await publisher.edit_message_caption(
             chat_id=chat_id, message_id=message_id, caption=text, reply_markup=reply_markup,
