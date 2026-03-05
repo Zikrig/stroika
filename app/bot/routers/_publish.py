@@ -1,5 +1,6 @@
 import logging
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup
 
 from app.application.context import AppContext
@@ -320,14 +321,33 @@ async def edit_request_message(
     # "последнего" в логе — иначе последним может быть ответ (голос/текст) и мы вызовем
     # edit_message_text для фото-карточки и получим "there is no text in the message to edit".
     content_type = await ctx.requests.get_message_content_type(request["id"], chat_id, message_id)
-    if content_type == "photo":
-        await publisher.edit_message_caption(
-            chat_id=chat_id, message_id=message_id, caption=text, reply_markup=reply_markup,
-        )
-    else:
-        await publisher.edit_message(
-            chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup,
-        )
+    try:
+        if content_type == "photo":
+            await publisher.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=text,
+                reply_markup=reply_markup,
+            )
+        else:
+            await publisher.edit_message(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+    except TelegramBadRequest as e:
+        msg = (e.message or "").lower()
+        # Fallback на случай, когда в БД тип сохранён как text, а в Telegram это фото/медиа без текста.
+        if "no text in the message to edit" in msg:
+            await publisher.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=text,
+                reply_markup=reply_markup,
+            )
+        else:
+            raise
 
 
 async def publish_container_event(
