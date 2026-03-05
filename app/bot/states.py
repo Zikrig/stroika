@@ -10,6 +10,7 @@ class ForemanCreateStates(StatesGroup):
     waiting_qty = State()
     waiting_subobject = State()
     waiting_need_by = State()
+    waiting_approved_by = State()
 
 
 class GroupMenuStates(StatesGroup):
@@ -29,6 +30,7 @@ class ForemanEditStates(StatesGroup):
     waiting_edit_qty = State()
     waiting_edit_subobject = State()
     waiting_edit_need_by = State()
+    waiting_edit_approved_by = State()
 
 
 class ActionInputStates(StatesGroup):

@@ -80,9 +80,6 @@ def _buttons_for_role(request: dict, stage: StageCode, role: Role) -> list[list[
     if role == Role.FOREMAN:
         if stage in {StageCode.CREATED}:
             out.append([
-                InlineKeyboardButton(text=f"{emoji} С кем согласовано? ФИО", callback_data=f"approved_by:{request_id}")
-            ])
-            out.append([
                 InlineKeyboardButton(
                     text=f"{emoji} Отменить — {label}",
                     callback_data=f"cancel:{request_id}",
@@ -101,6 +98,13 @@ def _buttons_for_role(request: dict, stage: StageCode, role: Role) -> list[list[
                     callback_data=f"received_full:{request_id}",
                 )
             ])
+        if stage in {
+            StageCode.SHIPPED,
+            StageCode.PARTIALLY_RECEIVED,
+            StageCode.FULLY_RECEIVED,
+            StageCode.CANCELLED,
+            StageCode.TERMINATED,
+        }:
             out.append([
                 InlineKeyboardButton(
                     text=f"{emoji} Повторить заявку — {label}",

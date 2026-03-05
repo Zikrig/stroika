@@ -20,6 +20,7 @@ async def execute(requests: RequestRepository, data: CreateRequestInput) -> dict
             "requested_qty": data.requested_qty,
             "unit": data.unit,
             "need_by": data.need_by,
+            "approved_by": data.approved_by,
             "remaining_qty": data.requested_qty,
             "status_code": StatusCode.WAITING.value,
             "stage_code": StageCode.CREATED.value,

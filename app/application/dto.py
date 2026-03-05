@@ -13,4 +13,5 @@ class CreateRequestInput:
     unit: str = "шт"
     subobject_name: str | None = None
     need_by: str | None = None
+    approved_by: str | None = None
     attachments: list[dict[str, Any]] = field(default_factory=list)

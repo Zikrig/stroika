@@ -82,7 +82,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await call.message.answer(
             f"Объект: {ctx.group_title}\n\n"
-            "Шаг 1/4. Отправьте описание потребности.\n"
+            "Шаг 1/5. Отправьте описание потребности.\n"
             "Можно прислать текст, фото, голосовое или файл.",
             reply_markup=new_request_description_inline(),
         )
@@ -134,7 +134,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             description=("\n".join(data.get("description_parts", [])).strip() or "Вложение без текстового описания"),
         )
         await state.set_state(ForemanCreateStates.waiting_qty)
-        await call.message.answer("Шаг 2/4. Отправьте количество (или 0).", reply_markup=cancel_inline())
+        await call.message.answer("Шаг 2/5. Отправьте количество (или 0).", reply_markup=cancel_inline())
         await call.answer()
 
     # ── Qty / subobject / need_by steps ───────────────────────────────
@@ -148,21 +148,30 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         await state.update_data(qty=qty)
         await state.set_state(ForemanCreateStates.waiting_subobject)
-        await message.answer("Шаг 3/4. Отправьте подобъект (или '-').", reply_markup=cancel_inline())
+        await message.answer("Шаг 3/5. Отправьте подобъект (или '-').", reply_markup=cancel_inline())
 
     @router.message(ForemanCreateStates.waiting_subobject, F.chat.type == "private")
     async def create_step_subobject(message: Message, state: FSMContext) -> None:
         sub = (message.text or "").strip()
         await state.update_data(subobject=None if sub in {"", "-"} else sub)
         await state.set_state(ForemanCreateStates.waiting_need_by)
-        await message.answer("Шаг 4/4. Отправьте срок потребности (или '-').", reply_markup=cancel_inline())
+        await message.answer("Шаг 4/5. Отправьте срок потребности (или '-').", reply_markup=cancel_inline())
 
     @router.message(ForemanCreateStates.waiting_need_by, F.chat.type == "private")
     async def create_step_need_by(message: Message, state: FSMContext) -> None:
-        data = await state.get_data()
         need_by = (message.text or "").strip()
+        await state.update_data(need_by=None if need_by in {"", "-"} else need_by)
+        await state.set_state(ForemanCreateStates.waiting_approved_by)
+        await message.answer("Шаг 5/5. С кем согласовано? (ФИО или '-')", reply_markup=cancel_inline())
+
+    @router.message(ForemanCreateStates.waiting_approved_by, F.chat.type == "private")
+    async def create_step_approved_by(message: Message, state: FSMContext) -> None:
+        data = await state.get_data()
+        approved_by = (message.text or "").strip()
+        approved_by = None if approved_by in {"", "-"} else approved_by
         target_chat_id = data["target_chat_id"]
         object_name = data.get("object_name", "Объект")
+        need_by_val = data.get("need_by")
         req = await create_request.execute(
             ctx.requests,
             CreateRequestInput(
@@ -173,7 +182,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 requested_qty=float(data.get("qty", 0.0)),
                 unit="шт",
                 subobject_name=data.get("subobject"),
-                need_by=None if need_by in {"", "-"} else need_by,
+                need_by=need_by_val,
+                approved_by=approved_by,
                 attachments=data.get("attachments", []),
             ),
         )
@@ -310,8 +320,13 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             request.get("foreman_user_id") == user_id
             and request.get("stage_code") in _EDITABLE_STAGES
         )
+        role = await _role(user_id)
+        repeat_request_id = request["id"] if role == Role.FOREMAN else None
         await message.answer(
-            text, reply_markup=request_view_inline(request, can_edit, lt, page, chat_id=chat_id),
+            text,
+            reply_markup=request_view_inline(
+                request, can_edit, lt, page, chat_id=chat_id, repeat_request_id=repeat_request_id,
+            ),
         )
 
     @router.callback_query(F.data.startswith("vreq:"))
@@ -325,74 +340,6 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await call.answer()
 
-    # ── С кем согласовано? ФИО (прораб, до передачи в ПДО) ─────────────
-
-    @router.callback_query(F.data.startswith("approved_by:"))
-    async def approved_by_start(call: CallbackQuery, state: FSMContext) -> None:
-        request_id = call.data.split(":", maxsplit=1)[1]
-        role = await _role(call.from_user.id)
-        if role != Role.FOREMAN:
-            await call.answer("Действие доступно только прорабу", show_alert=True)
-            return
-        req = await ctx.requests.get_request(request_id)
-        if not req:
-            await call.answer("Заявка не найдена", show_alert=True)
-            return
-        if req.get("foreman_user_id") != call.from_user.id:
-            await call.answer("Это не ваша заявка", show_alert=True)
-            return
-        if req.get("stage_code") != StageCode.CREATED.value:
-            await call.answer("Указать согласование можно только до передачи в ПДО", show_alert=True)
-            return
-        if call.message.chat.type != "private":
-            if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
-                await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
-                return
-        p_state = private_fsm(state, call.bot.id, call.from_user.id)
-        await p_state.set_state(ActionInputStates.waiting_approved_by_fio)
-        await p_state.update_data(target_request_id=request_id)
-        try:
-            await call.bot.send_message(
-                call.from_user.id,
-                "Введите ФИО того, с кем согласована заявка:",
-                reply_markup=cancel_inline(),
-            )
-        except Exception:
-            await call.answer("Напишите боту /start в личку, чтобы отправить ФИО", show_alert=True)
-            await p_state.clear()
-            return
-        await call.answer()
-
-    @router.message(ActionInputStates.waiting_approved_by_fio, F.chat.type == "private")
-    async def approved_by_fio_input(message: Message, state: FSMContext) -> None:
-        data = await state.get_data()
-        request_id = data.get("target_request_id")
-        await state.clear()
-        if not request_id:
-            await message.answer("Сессия сброшена. Выберите заявку снова.", reply_markup=await _menu(message.from_user.id))
-            return
-        req = await ctx.requests.get_request(request_id)
-        if not req or req.get("foreman_user_id") != message.from_user.id or req.get("stage_code") != StageCode.CREATED.value:
-            await message.answer("Заявка не найдена или изменить согласование уже нельзя.", reply_markup=await _menu(message.from_user.id))
-            return
-        fio = (message.text or message.caption or "").strip() or "-"
-        updated = await ctx.requests.update_foreman_fields(request_id, {"approved_by": fio})
-        if updated:
-            err = await safe_update_request_in_group(
-                ctx=ctx,
-                publisher=publisher,
-                request=updated,
-                target_chat_id=updated["chat_id"],
-                reply_markup=await get_request_actions_keyboard_group(ctx, updated),
-            )
-            if err:
-                await message.answer(err, reply_markup=await _menu(message.from_user.id))
-                return
-        await message.answer(
-            f"С кем согласовано: {fio}\nЗаявка {updated.get('request_code', '')} обновлена.",
-            reply_markup=await _menu(message.from_user.id),
-        )
-
     # ── Edit foreman fields ───────────────────────────────────────────
 
     _EDIT_FIELD_MAP = {
@@ -400,6 +347,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         "q": ("requested_qty", ForemanEditStates.waiting_edit_qty, "Введите новое количество:"),
         "s": ("subobject_name", ForemanEditStates.waiting_edit_subobject, "Введите новый подобъект (или '-' для пустого):"),
         "n": ("need_by", ForemanEditStates.waiting_edit_need_by, "Введите новый срок (или '-' для пустого):"),
+        "a": ("approved_by", ForemanEditStates.waiting_edit_approved_by, "Введите ФИО (или '-' для пустого):"),
     }
 
     @router.callback_query(F.data.startswith("ed:"))
@@ -479,6 +427,11 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     @router.message(ForemanEditStates.waiting_edit_need_by, F.chat.type == "private")
     async def edit_need_by_input(message: Message, state: FSMContext) -> None:
+        raw = (message.text or "").strip()
+        await _finish_edit(message, state, None if raw in {"", "-"} else raw)
+
+    @router.message(ForemanEditStates.waiting_edit_approved_by, F.chat.type == "private")
+    async def edit_approved_by_input(message: Message, state: FSMContext) -> None:
         raw = (message.text or "").strip()
         await _finish_edit(message, state, None if raw in {"", "-"} else raw)
 

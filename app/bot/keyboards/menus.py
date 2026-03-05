@@ -97,7 +97,12 @@ def request_list_inline(
 
 
 def request_view_inline(
-    request: dict, can_edit: bool, list_type: str, page: int, chat_id: int | None = None,
+    request: dict,
+    can_edit: bool,
+    list_type: str,
+    page: int,
+    chat_id: int | None = None,
+    repeat_request_id: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Buttons shown when viewing a single request card in DM."""
     code = request["request_code"]
@@ -111,6 +116,13 @@ def request_view_inline(
         rows.append([
             InlineKeyboardButton(text="✏️ Подобъект", callback_data=f"ed:s:{code}"),
             InlineKeyboardButton(text="✏️ Срок", callback_data=f"ed:n:{code}"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="✏️ С кем согласовано", callback_data=f"ed:a:{code}"),
+        ])
+    if repeat_request_id is not None:
+        rows.append([
+            InlineKeyboardButton(text="🔄 Повторить заявку", callback_data=f"repeat:{repeat_request_id}"),
         ])
     rows.append([InlineKeyboardButton(text="← К списку", callback_data=f"rlist:{list_type}:{page}{suf}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
