@@ -33,7 +33,10 @@ class ForemanEditStates(StatesGroup):
 
 class ActionInputStates(StatesGroup):
     waiting_pdo_excel = State()
+    waiting_approved_by_fio = State()
     waiting_partial_qty = State()
+    waiting_full_received_choice = State()  # Выполните фото / Пропустить
+    waiting_delivery_photo = State()
     waiting_purchase_date = State()
     waiting_ship_date = State()
     waiting_cancel_reason = State()

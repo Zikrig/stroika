@@ -123,6 +123,7 @@ def render_request_card(
     lines = [
         f"ID: {request.get('request_code', '-')}",
         f"👷 Прораб: {_format_foreman(request, foreman_info)}",
+        f"✅ С кем согласовано: {request.get('approved_by') or '-'}",
         f"🏗 Объект: {request.get('object_name') or '-'}",
         f"🎯 Подобъект: {request.get('subobject_name') or '-'}",
         f"📝 Наименование от прораба: {request.get('name_from_foreman') or '-'}",

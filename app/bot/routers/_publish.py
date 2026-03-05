@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup
 
 from app.application.context import AppContext
-from app.bot.formatters.request_card import render_container_card, render_request_card
+from app.bot.formatters.request_card import _fmt_date, render_container_card, render_request_card
 from app.bot.keyboards.request_actions import request_actions_keyboard_group
 from app.domain.enums import EventType
 from app.infrastructure.telegram.publisher import TelegramPublisher
@@ -52,6 +52,90 @@ async def _request_card_text(
     )
 
 
+def _format_event_log_line(request: dict, event: dict, note: str | None, note_label: str) -> str:
+    created = _fmt_date(event.get("created_at"))
+    event_type = event.get("event_type")
+    payload = event.get("payload_json") or {}
+
+    parts: list[str] = []
+
+    if event_type == EventType.REQUEST_CREATED.value:
+        parts.append("Заявка создана")
+    elif event_type == EventType.PDO_TAKEN.value:
+        parts.append("ПДО взял(а) заявку в работу")
+    elif event_type == EventType.PDO_FORMALIZED.value:
+        mode = payload.get("mode")
+        if mode == "container":
+            count = payload.get("children_count")
+            parts.append(f"ПДО сформировал контейнер, создано дочерних заявок: {count}")
+        else:
+            parts.append("ПДО обработал заявку")
+    elif event_type == EventType.PROCUREMENT_TAKEN.value:
+        parts.append("Закупка взяла заявку в работу")
+    elif event_type == EventType.RETURNED_TO_PDO.value:
+        parts.append("Заявка возвращена в ПДО")
+    elif event_type == EventType.PURCHASED.value:
+        eta = payload.get("eta_shipping")
+        if eta:
+            parts.append(f"Закуплено, поставка до офиса до {eta}")
+        else:
+            parts.append("Закуплено")
+    elif event_type == EventType.SHIPPED.value:
+        eta_arrival = payload.get("eta_arrival")
+        if eta_arrival:
+            parts.append(f"Отгружено, ожидаем на объект к {eta_arrival}")
+        else:
+            parts.append("Отгружено поставщиком")
+    elif event_type == EventType.PARTIALLY_RECEIVED.value:
+        delta = payload.get("delta_qty")
+        total = payload.get("received_total_qty")
+        remaining = payload.get("remaining_qty")
+        parts.append(f"Прораб получил частично: +{delta} (итого {total}, остаток {remaining})")
+    elif event_type == EventType.FULLY_RECEIVED.value:
+        total = payload.get("received_total_qty")
+        parts.append(f"Прораб получил полностью (всего {total})")
+    elif event_type == EventType.CANCELLED.value:
+        parts.append("Заявка отменена")
+    elif event_type == EventType.PAUSED.value:
+        parts.append("Заявка поставлена на паузу")
+    elif event_type == EventType.RESUMED.value:
+        parts.append("Пауза снята")
+    elif event_type == EventType.MANAGER_COMMENTED.value:
+        parts.append("Комментарий руководителя")
+    elif event_type == EventType.TERMINATED.value:
+        parts.append("Закупка прекращена руководителем")
+
+    if note:
+        parts.append(f"{note_label}: {note}")
+
+    body = " | ".join(str(p) for p in parts if p) or f"Событие {event_type}"
+    return f"{created} — {body}"
+
+
+async def publish_event_reply(
+    ctx: AppContext,
+    publisher: TelegramPublisher,
+    chat_id: int,
+    request_id: str,
+    root_message_id: int,
+    note: str | None = None,
+    note_label: str = "Комментарий",
+) -> None:
+    events = await ctx.requests.get_events(request_id)
+    if not events:
+        return
+    last = events[-1]
+    text = _format_event_log_line({}, last, note=note, note_label=note_label)
+    message_id = await publisher.publish(
+        chat_id=chat_id,
+        text=text,
+        reply_to_message_id=root_message_id,
+    )
+    await ctx.requests.add_message_link(
+        request_id, last["id"], chat_id, message_id, content_type="text",
+    )
+
+
 async def publish_request_event(
     ctx: AppContext,
     publisher: TelegramPublisher,
@@ -60,8 +144,12 @@ async def publish_request_event(
     reply_markup: InlineKeyboardMarkup | None,
     note: str | None = None,
     note_label: str = "Комментарий",
+    log_event: bool = True,
 ) -> int:
-    """Publish or update request card in group. One message: text or photo+caption. Prefer edit if exists."""
+    """Publish or update request card in group.
+    Основная карточка заявки — это одно сообщение (текст или фото+подпись).
+    Отдельно для каждого события публикуется короткий лог-сообщение ответом на эту карточку.
+    """
     text = await _request_card_text(ctx, request, note=note, note_label=note_label)
     existing = await ctx.requests.get_latest_message_info(request["id"], chat_id)
     if existing is not None:
@@ -75,10 +163,16 @@ async def publish_request_event(
             await publisher.edit_message(
                 chat_id=chat_id, message_id=msg_id, text=text, reply_markup=reply_markup,
             )
-        events = await ctx.requests.get_events(request["id"])
-        if events:
-            await ctx.requests.add_message_link(
-                request["id"], events[-1]["id"], chat_id, msg_id, content_type=content_type,
+        # Лог-сообщение по последнему событию
+        if log_event:
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=chat_id,
+                request_id=request["id"],
+                root_message_id=msg_id,
+                note=note,
+                note_label=note_label,
             )
         return msg_id
     attachments = await ctx.requests.list_attachments(request["id"])
@@ -112,15 +206,37 @@ async def publish_request_event(
     voice_file_ids = [
         a["file_id"] for a in attachments if a.get("attachment_type") == "voice" and a.get("file_id")
     ]
-    for fid in voice_file_ids[:10]:
-        try:
-            await publisher.send_voice(chat_id=chat_id, voice=fid)
-        except Exception:
-            pass
+    if voice_file_ids:
+        events = await ctx.requests.get_events(request["id"])
+        last_event_id = events[-1]["id"] if events else None
+        for fid in voice_file_ids[:10]:
+            try:
+                v_msg_id = await publisher.send_voice(
+                    chat_id=chat_id,
+                    voice=fid,
+                    reply_to_message_id=message_id,
+                )
+                if last_event_id is not None:
+                    await ctx.requests.add_message_link(
+                        request["id"], last_event_id, chat_id, v_msg_id, content_type="voice",
+                    )
+            except Exception:
+                pass
     events = await ctx.requests.get_events(request["id"])
     if events:
         await ctx.requests.add_message_link(
             request["id"], events[-1]["id"], chat_id, message_id, content_type=content_type,
+        )
+    # Лог-сообщение по последнему событию
+    if log_event:
+        await publish_event_reply(
+            ctx=ctx,
+            publisher=publisher,
+            chat_id=chat_id,
+            request_id=request["id"],
+            root_message_id=message_id,
+            note=note,
+            note_label=note_label,
         )
     return message_id
 
@@ -161,4 +277,11 @@ async def publish_container_event(
     message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=None)
     if events:
         await ctx.requests.add_message_link(container["id"], events[-1]["id"], chat_id, message_id)
+    await publish_event_reply(
+        ctx=ctx,
+        publisher=publisher,
+        chat_id=chat_id,
+        request_id=container["id"],
+        root_message_id=message_id,
+    )
     return message_id

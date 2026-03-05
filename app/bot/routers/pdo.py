@@ -14,6 +14,7 @@ from app.bot.routers._publish import (
     edit_request_message,
     get_request_actions_keyboard_group,
     publish_container_event,
+    publish_event_reply,
     publish_request_event,
 )
 from app.bot.states import ActionInputStates
@@ -66,6 +67,13 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=group_chat_id,
+                request_id=req["id"],
+                root_message_id=call.message.message_id,
+            )
         await call.answer("Заявка взята ПДО")
 
     # ── Template + Excel upload (group card → DM FSM) ─────────────────
@@ -86,6 +94,25 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer("Заявка не найдена", show_alert=True)
             return
 
+        try:
+            req = await take_request.take_by_pdo(ctx.requests, request_id, call.from_user.id) or req
+        except ValueError as exc:
+            await call.answer(str(exc), show_alert=True)
+            return
+        if req:
+            await edit_request_message(
+                ctx=ctx, publisher=publisher,
+                chat_id=group_chat_id, message_id=call.message.message_id,
+                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+            )
+            events = await ctx.requests.get_events(req["id"])
+            if events:
+                info = await ctx.requests.get_latest_message_info(req["id"], group_chat_id)
+                ct = info["content_type"] if info else "text"
+                await ctx.requests.add_message_link(
+                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
+                )
+
         p_state = private_fsm(state, call.bot.id, call.from_user.id)
         await p_state.set_state(ActionInputStates.waiting_pdo_excel)
         await p_state.update_data(
@@ -94,12 +121,25 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             source_message_id=call.message.message_id,
         )
 
-        content = build_pdo_template(req["request_code"])
+        foreman_info = None
+        if req.get("foreman_user_id"):
+            foreman_info = await ctx.roles.get_user(req["foreman_user_id"])
+        foreman_display = (foreman_info.get("display_name") or foreman_info.get("full_name") or "").strip() if foreman_info else ""
+
+        content = build_pdo_template(req, foreman_display_name=foreman_display)
+        code = req["request_code"]
+        filename_original = f"{code}.0.xlsx"
+        caption = (
+            "Заполните форму и отправьте файлом сюда (в личку бота).\n\n"
+            f"Файл сохранён как «{filename_original}» — так в истории остаётся исходная заявка. "
+            f"После обработки сохраните и присылайте форму уже с именем «{code}.xlsx» (без .0), "
+            "чтобы по названию отличать обработанные заявки от исходных."
+        )
         try:
             await call.bot.send_document(
                 call.from_user.id,
-                BufferedInputFile(content, filename=f"{req['request_code']}.xlsx"),
-                caption="Заполните форму и отправьте файлом сюда (в личку бота)",
+                BufferedInputFile(content, filename=filename_original),
+                caption=caption,
                 reply_markup=cancel_inline(),
             )
         except Exception:
@@ -139,6 +179,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         source_message_id = data.get("source_message_id")
         await state.clear()
 
+        code = req.get("request_code", "")
+        hint = (
+            f"Форма ПДО обработана. Напоминание: сохраняйте обработанные файлы под именем «{code}.xlsx» (без .0), "
+            f"а исходный бланк у вас остаётся «{code}.0.xlsx» — так в истории на компьютере видно, что исходная заявка, а что обработанная."
+        )
+
         if len(created) == 1 and source_message_id is not None:
             item = created[0]
             await edit_request_message(
@@ -153,6 +199,13 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     item["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request_id=item["id"],
+                root_message_id=source_message_id,
+            )
         else:
             if len(created) > 1:
                 parent = await ctx.requests.get_request(request_id)
@@ -166,7 +219,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                     ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                     request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
                 )
-        await message.answer("Форма ПДО обработана", reply_markup=await _menu(message.from_user.id))
+        await message.answer(hint, reply_markup=await _menu(message.from_user.id))
 
     @router.message(ActionInputStates.waiting_pdo_excel, F.chat.type == "private")
     async def pdo_excel_not_document(message: Message) -> None:

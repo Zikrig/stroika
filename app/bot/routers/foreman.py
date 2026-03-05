@@ -4,7 +4,7 @@ import logging
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.application.dto import CreateRequestInput
 from app.application.use_cases import confirm_full_received, confirm_partial_received, create_request
@@ -23,8 +23,10 @@ from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import publish_request_event
 from app.bot.states import ActionInputStates, ForemanCreateStates, ForemanEditStates, GroupMenuStates
+from app.bot.routers._guards import is_latest_request_message
+from app.bot.routers._helpers import private_fsm
 from app.config import get_settings
-from app.domain.enums import Role, StageCode
+from app.domain.enums import EventType, Role, StageCode
 from app.infrastructure.telegram.publisher import TelegramPublisher
 
 _log = logging.getLogger("bot.foreman")
@@ -322,6 +324,72 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await call.answer()
 
+    # ── С кем согласовано? ФИО (прораб, до передачи в ПДО) ─────────────
+
+    @router.callback_query(F.data.startswith("approved_by:"))
+    async def approved_by_start(call: CallbackQuery, state: FSMContext) -> None:
+        request_id = call.data.split(":", maxsplit=1)[1]
+        role = await _role(call.from_user.id)
+        if role != Role.FOREMAN:
+            await call.answer("Действие доступно только прорабу", show_alert=True)
+            return
+        req = await ctx.requests.get_request(request_id)
+        if not req:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+        if req.get("foreman_user_id") != call.from_user.id:
+            await call.answer("Это не ваша заявка", show_alert=True)
+            return
+        if req.get("stage_code") != StageCode.CREATED.value:
+            await call.answer("Указать согласование можно только до передачи в ПДО", show_alert=True)
+            return
+        if call.message.chat.type != "private":
+            if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+                await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
+                return
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(ActionInputStates.waiting_approved_by_fio)
+        await p_state.update_data(target_request_id=request_id)
+        try:
+            await call.bot.send_message(
+                call.from_user.id,
+                "Введите ФИО того, с кем согласована заявка:",
+                reply_markup=cancel_inline(),
+            )
+        except Exception:
+            await call.answer("Напишите боту /start в личку, чтобы отправить ФИО", show_alert=True)
+            await p_state.clear()
+            return
+        await call.answer()
+
+    @router.message(ActionInputStates.waiting_approved_by_fio, F.chat.type == "private")
+    async def approved_by_fio_input(message: Message, state: FSMContext) -> None:
+        data = await state.get_data()
+        request_id = data.get("target_request_id")
+        await state.clear()
+        if not request_id:
+            await message.answer("Сессия сброшена. Выберите заявку снова.", reply_markup=await _menu(message.from_user.id))
+            return
+        req = await ctx.requests.get_request(request_id)
+        if not req or req.get("foreman_user_id") != message.from_user.id or req.get("stage_code") != StageCode.CREATED.value:
+            await message.answer("Заявка не найдена или изменить согласование уже нельзя.", reply_markup=await _menu(message.from_user.id))
+            return
+        fio = (message.text or message.caption or "").strip() or "-"
+        updated = await ctx.requests.update_foreman_fields(request_id, {"approved_by": fio})
+        if updated:
+            await publish_request_event(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=updated["chat_id"],
+                request=updated,
+                reply_markup=await get_request_actions_keyboard_group(ctx, updated),
+                log_event=False,
+            )
+        await message.answer(
+            f"С кем согласовано: {fio}\nЗаявка {updated.get('request_code', '')} обновлена.",
+            reply_markup=await _menu(message.from_user.id),
+        )
+
     # ── Edit foreman fields ───────────────────────────────────────────
 
     _EDIT_FIELD_MAP = {
@@ -373,8 +441,12 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
         role = await _role(message.from_user.id)
         await publish_request_event(
-            ctx=ctx, publisher=publisher, chat_id=updated["chat_id"],
-            request=updated, reply_markup=await get_request_actions_keyboard_group(ctx, updated),
+            ctx=ctx,
+            publisher=publisher,
+            chat_id=updated["chat_id"],
+            request=updated,
+            reply_markup=await get_request_actions_keyboard_group(ctx, updated),
+            log_event=False,
         )
         await message.answer(f"Заявка {code} обновлена", reply_markup=await _menu(message.from_user.id))
 
@@ -501,8 +573,19 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         await message.answer("Получение (частично) зафиксировано", reply_markup=await _menu(message.from_user.id))
 
+    def _delivery_photo_choice_inline() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Выполните фото", callback_data="delivery_photo_do"),
+                    InlineKeyboardButton(text="Пропустить", callback_data="delivery_photo_skip"),
+                ],
+                [InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")],
+            ]
+        )
+
     @router.callback_query(F.data.startswith("received_full:"))
-    async def received_full_click(call: CallbackQuery) -> None:
+    async def received_full_click(call: CallbackQuery, state: FSMContext) -> None:
         role = await _role(call.from_user.id)
         if role != Role.FOREMAN:
             await call.answer("Недостаточно прав", show_alert=True)
@@ -512,15 +595,114 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
             await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
             return
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(ActionInputStates.waiting_full_received_choice)
+        await p_state.update_data(
+            target_request_id=request_id,
+            target_chat_id=group_chat_id,
+        )
+        try:
+            req = await ctx.requests.get_request(request_id)
+            code = req.get("request_code", "") if req else ""
+            await call.bot.send_message(
+                call.from_user.id,
+                f"Заявка {code} получена на объекте. Сфотографируйте поставку или пропустите.",
+                reply_markup=_delivery_photo_choice_inline(),
+            )
+        except Exception:
+            await call.answer("Напишите боту /start в личку", show_alert=True)
+            await p_state.clear()
+            return
+        await call.answer("Продолжите в личных сообщениях")
+
+    @router.callback_query(
+        ActionInputStates.waiting_full_received_choice,
+        F.data == "delivery_photo_skip",
+    )
+    async def delivery_photo_skip(call: CallbackQuery, state: FSMContext) -> None:
+        data = await state.get_data()
+        request_id = data.get("target_request_id")
+        target_chat_id = data.get("target_chat_id")
+        await state.clear()
+        if not request_id or not target_chat_id:
+            await call.message.answer("Сессия сброшена.", reply_markup=await _menu(call.from_user.id))
+            await call.answer()
+            return
         try:
             req = await confirm_full_received.execute(ctx.requests, request_id, call.from_user.id)
         except ValueError as exc:
-            await call.answer(str(exc), show_alert=True)
+            await call.message.answer(str(exc), reply_markup=await _menu(call.from_user.id))
+            await call.answer()
             return
         if req:
             await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=group_chat_id, request=req, reply_markup=None,
+                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                request=req, reply_markup=None,
             )
-        await call.answer("Заявка закрыта")
+        await call.message.answer("Заявка закрыта (без фото)", reply_markup=await _menu(call.from_user.id))
+        await call.answer()
+
+    @router.callback_query(
+        ActionInputStates.waiting_full_received_choice,
+        F.data == "delivery_photo_do",
+    )
+    async def delivery_photo_do(call: CallbackQuery, state: FSMContext) -> None:
+        data = await state.get_data()
+        request_id = data.get("target_request_id")
+        if not request_id:
+            await state.clear()
+            await call.message.answer("Сессия сброшена.", reply_markup=await _menu(call.from_user.id))
+            await call.answer()
+            return
+        await state.set_state(ActionInputStates.waiting_delivery_photo)
+        await call.message.answer(
+            "Отправьте одно или несколько фото поставки. После отправки заявка будет закрыта.",
+            reply_markup=cancel_inline(),
+        )
+        await call.answer()
+
+    @router.message(
+        ActionInputStates.waiting_delivery_photo,
+        F.chat.type == "private",
+        F.photo,
+    )
+    async def delivery_photo_received(message: Message, state: FSMContext) -> None:
+        data = await state.get_data()
+        request_id = data.get("target_request_id")
+        target_chat_id = data.get("target_chat_id")
+        await state.clear()
+        if not request_id or not target_chat_id:
+            await message.answer("Сессия сброшена.", reply_markup=await _menu(message.from_user.id))
+            return
+        try:
+            req = await confirm_full_received.execute(ctx.requests, request_id, message.from_user.id)
+        except ValueError as exc:
+            await message.answer(str(exc), reply_markup=await _menu(message.from_user.id))
+            return
+        if not req:
+            await message.answer("Заявка не найдена", reply_markup=await _menu(message.from_user.id))
+            return
+        events = await ctx.requests.get_events(request_id)
+        last_event = next((e for e in reversed(events or []) if e.get("event_type") == EventType.FULLY_RECEIVED.value), None)
+        if last_event and message.photo:
+            p = message.photo[-1]
+            attachments = [{
+                "file_id": p.file_id,
+                "file_unique_id": getattr(p, "file_unique_id", ""),
+                "attachment_type": "photo",
+            }]
+            await ctx.requests.add_attachments(request_id, last_event["id"], attachments)
+        await publish_request_event(
+            ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+            request=req, reply_markup=None,
+        )
+        await message.answer("Заявка закрыта, фото добавлено", reply_markup=await _menu(message.from_user.id))
+
+    @router.message(
+        ActionInputStates.waiting_delivery_photo,
+        F.chat.type == "private",
+    )
+    async def delivery_photo_other(message: Message, state: FSMContext) -> None:
+        await message.answer("Отправьте фото поставки или нажмите «Отмена».", reply_markup=cancel_inline())
 
     return router

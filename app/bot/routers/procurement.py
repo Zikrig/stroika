@@ -8,8 +8,12 @@ from app.application.use_cases import mark_purchased, mark_shipped, return_to_pd
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import get_request_actions_keyboard_group
-from app.bot.routers._publish import edit_request_message, publish_request_event
+from app.bot.routers._publish import (
+    edit_request_message,
+    get_request_actions_keyboard_group,
+    publish_event_reply,
+    publish_request_event,
+)
 from app.bot.states import ActionInputStates
 from app.config import get_settings
 from app.domain.enums import Role
@@ -58,6 +62,13 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=group_chat_id,
+                request_id=req["id"],
+                root_message_id=call.message.message_id,
+            )
         await call.answer("Заявка взята в работу")
 
     # ── Purchased (group → DM FSM) ───────────────────────────────────

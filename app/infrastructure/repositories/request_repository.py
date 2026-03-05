@@ -46,8 +46,8 @@ class RequestRepository:
                   id, request_code, chat_id, parent_request_id, is_container, foreman_user_id,
                   object_name, subobject_name, name_from_foreman, nomenclature_1c, code_1c,
                   requested_qty, unit, need_by, from_stock_qty, to_purchase_qty, received_total_qty,
-                  remaining_qty, status_code, stage_code, responsible_role, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  remaining_qty, status_code, stage_code, responsible_role, approved_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     request_id,
@@ -71,6 +71,7 @@ class RequestRepository:
                     payload.get("status_code", StatusCode.WAITING.value),
                     payload.get("stage_code", StageCode.CREATED.value),
                     payload.get("responsible_role", Role.PDO.value),
+                    payload.get("approved_by"),
                     _now_iso(),
                     _now_iso(),
                 ),
@@ -183,7 +184,7 @@ class RequestRepository:
             await conn.close()
 
     async def update_foreman_fields(self, request_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
-        allowed = {"name_from_foreman", "requested_qty", "subobject_name", "need_by"}
+        allowed = {"name_from_foreman", "requested_qty", "subobject_name", "need_by", "approved_by"}
         to_update = {k: v for k, v in fields.items() if k in allowed}
         if not to_update:
             return await self.get_request(request_id)

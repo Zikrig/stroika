@@ -69,12 +69,18 @@ def request_list_inline(
     rows: list[list[InlineKeyboardButton]] = []
     for item in items:
         code = item.get("request_code", "?")
-        desc = item.get("name_from_foreman") or item.get("object_name") or ""
-        if len(desc) > 30:
-            desc = desc[:27] + "..."
+        title = (
+            item.get("nomenclature_1c")
+            or item.get("name_from_foreman")
+            or item.get("object_name")
+            or ""
+        ).strip()
+        if len(title) > 35:
+            title = title[:32] + "..."
+        label = f'{code} «{title}»' if title else code
         rows.append([
             InlineKeyboardButton(
-                text=f"{code} — {desc}",
+                text=label,
                 callback_data=f"vreq:{list_type}:{page}:{code}{suf}",
             )
         ])

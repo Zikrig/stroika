@@ -4,14 +4,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.application.context import AppContext
-from app.application.dto import CreateRequestInput
-from app.application.use_cases import cancel_request, create_request
-from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
-from app.bot.routers._publish import get_request_actions_keyboard_group
+from app.application.use_cases import cancel_request
+from app.bot.keyboards.menus import cancel_inline, new_request_description_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import publish_request_event
-from app.bot.states import ActionInputStates
+from app.bot.routers._publish import get_request_actions_keyboard_group, publish_request_event
+from app.bot.states import ActionInputStates, ForemanCreateStates
 from app.config import get_settings
 from app.domain.enums import Role
 from app.infrastructure.telegram.publisher import TelegramPublisher
@@ -82,10 +80,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             )
         await message.answer("Заявка отменена", reply_markup=await _menu(message.from_user.id))
 
-    # ── Repeat (one-click, group card) ────────────────────────────────
+    # ── Repeat: запуск полного цикла создания заявки (описание, срок, с кем согласовано и т.д.) ─
 
     @router.callback_query(F.data.startswith("repeat:"))
-    async def repeat_request(call: CallbackQuery) -> None:
+    async def repeat_request(call: CallbackQuery, state: FSMContext) -> None:
         role = await _role(call.from_user.id)
         if role != Role.FOREMAN:
             await call.answer("Недостаточно прав", show_alert=True)
@@ -99,23 +97,26 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not src:
             await call.answer("Заявка не найдена", show_alert=True)
             return
-        req = await create_request.execute(
-            ctx.requests,
-            CreateRequestInput(
-                chat_id=group_chat_id,
-                foreman_user_id=call.from_user.id,
-                object_name=src["object_name"],
-                description=src.get("name_from_foreman") or src.get("nomenclature_1c") or "Повтор",
-                requested_qty=float(src.get("requested_qty", 0.0)),
-                unit=src.get("unit") or "шт",
-                subobject_name=src.get("subobject_name"),
-                need_by=src.get("need_by"),
-            ),
+
+        p_state = private_fsm(state, call.bot.id, call.from_user.id)
+        await p_state.set_state(ForemanCreateStates.waiting_description)
+        await p_state.update_data(
+            target_chat_id=group_chat_id,
+            object_name=ctx.group_title or src.get("object_name") or "Объект",
+            description_parts=[],
+            attachments=[],
         )
-        await publish_request_event(
-            ctx=ctx, publisher=publisher, chat_id=group_chat_id,
-            request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-        )
-        await call.answer("Повторная заявка создана")
+        try:
+            await call.bot.send_message(
+                call.from_user.id,
+                "Повтор заявки — заново укажите описание, срок и при необходимости «С кем согласовано» на карточке.\n\n"
+                "Шаг 1/4. Отправьте описание потребности.\nМожно прислать текст, фото, голосовое или файл.",
+                reply_markup=new_request_description_inline(),
+            )
+        except Exception:
+            await call.answer("Напишите боту /start в личку", show_alert=True)
+            await p_state.clear()
+            return
+        await call.answer("Продолжите в личных сообщениях")
 
     return router

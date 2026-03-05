@@ -12,11 +12,21 @@ async def execute(requests: RequestRepository, parent_request: dict, rows: list[
 
     if len(rows) == 1:
         row = rows[0]
+        from_stock = float(row.get("from_stock_qty") or 0)
+        to_purchase = float(row.get("to_purchase_qty") or 0)
+        if from_stock > 0 and to_purchase <= 0:
+            status = StatusCode.FORWARDED
+            stage = StageCode.SHIPPED
+            responsible_role = Role.FOREMAN
+        else:
+            status = StatusCode.WAITING
+            stage = StageCode.TRANSFERRED_TO_PROCUREMENT
+            responsible_role = Role.PROCUREMENT
         await requests.update_state(
             request_id,
-            status=StatusCode.WAITING,
-            stage=StageCode.TRANSFERRED_TO_PROCUREMENT,
-            responsible_role=Role.PROCUREMENT,
+            status=status,
+            stage=stage,
+            responsible_role=responsible_role,
             extra={
                 "subobject_name": row["subobject_name"],
                 "name_from_foreman": row["name_from_foreman"],

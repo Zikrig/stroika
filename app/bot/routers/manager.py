@@ -8,7 +8,12 @@ from app.application.use_cases import manager_actions, pause_resume_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import edit_request_message, get_request_actions_keyboard_group, publish_request_event
+from app.bot.routers._publish import (
+    edit_request_message,
+    get_request_actions_keyboard_group,
+    publish_event_reply,
+    publish_request_event,
+)
 from app.bot.states import ActionInputStates
 from app.config import get_settings
 from app.domain.enums import Role
@@ -83,6 +88,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request_id=req["id"],
+                root_message_id=source_message_id,
+                note=message.text or "",
+                note_label="Комментарий руководителя",
+            )
         elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
@@ -137,6 +151,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request_id=req["id"],
+                root_message_id=source_message_id,
+                note=message.text or "",
+                note_label="Причина паузы",
+            )
         elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
@@ -191,6 +214,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request_id=req["id"],
+                root_message_id=source_message_id,
+                note=message.text or "",
+                note_label="Комментарий к снятию паузы",
+            )
         elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
@@ -241,6 +273,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 await ctx.requests.add_message_link(
                     req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
                 )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request_id=req["id"],
+                root_message_id=source_message_id,
+                note=message.text or "",
+                note_label="Причина прекращения",
+            )
         elif req:
             await publish_request_event(
                 ctx=ctx, publisher=publisher, chat_id=target_chat_id,
