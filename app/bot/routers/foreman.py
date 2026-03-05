@@ -18,12 +18,14 @@ from app.bot.keyboards.menus import (
     request_view_inline,
 )
 from app.bot.formatters.request_card import _fmt_date
-from app.bot.routers._publish import get_request_actions_keyboard_group, safe_update_request_in_group
+from app.bot.routers._publish import (
+    get_request_actions_keyboard_group,
+    publish_request_event,
+    safe_update_request_in_group,
+)
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.states import ActionInputStates, ForemanCreateStates, ForemanEditStates, GroupMenuStates
-from app.bot.routers._guards import is_latest_request_message
-from app.bot.routers._helpers import private_fsm
 from app.config import get_settings
 from app.domain.enums import EventType, Role, StageCode
 from app.infrastructure.telegram.publisher import TelegramPublisher
