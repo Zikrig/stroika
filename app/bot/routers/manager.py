@@ -1,4 +1,6 @@
 # pyright: reportUnusedFunction=false
+import logging
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -19,6 +21,8 @@ from app.bot.states import ActionInputStates
 from app.config import get_settings
 from app.domain.enums import Role
 from app.infrastructure.telegram.publisher import TelegramPublisher
+
+logger = logging.getLogger("bot.debug")
 
 
 def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
@@ -138,9 +142,14 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                         note=text,
                         note_label="Комментарий руководителя",
                     )
-                except Exception:
+                except Exception as e:
                     # Если не смогли обновить карточку / лог в группе — всё равно
                     # считаем комментарий принятым и отвечаем в личку.
+                    logger.exception(
+                        "comment_input: не удалось обновить карточку/лог в группе (request_id=%s): %s",
+                        request_id,
+                        e,
+                    )
                     error = "Комментарий сохранён, но не удалось обновить сообщение в группе."
             elif req:
                 try:
@@ -153,9 +162,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                         note=text,
                         note_label="Комментарий руководителя",
                     )
-                except Exception:
+                except Exception as e:
+                    logger.exception(
+                        "comment_input: не удалось опубликовать событие в группе (request_id=%s): %s",
+                        request_id,
+                        e,
+                    )
                     error = "Комментарий сохранён, но не удалось обновить сообщение в группе."
-        except Exception:
+        except Exception as e:
+            logger.exception("comment_input: не удалось сохранить комментарий (request_id=%s): %s", request_id, e)
             error = "Не удалось сохранить комментарий, попробуйте ещё раз."
 
         # 2) В любом случае стараемся закрыть диалоговое сообщение в личке.
