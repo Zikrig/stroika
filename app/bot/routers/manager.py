@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from app.application.context import AppContext
 from app.application.use_cases import manager_actions, pause_resume_request
 from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
+from app.bot.keyboards.request_actions import _format_request_label
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import (
@@ -43,7 +44,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             source_message_id=call.message.message_id,
         )
         try:
-            msg = await call.bot.send_message(call.from_user.id, prompt, reply_markup=cancel_inline())
+            req = await ctx.requests.get_request(request_id)
+            label = _format_request_label(req) if req else request_id
+            full_prompt = f"{prompt}\n\nЗаявка {label}"
+            msg = await call.bot.send_message(call.from_user.id, full_prompt, reply_markup=cancel_inline())
             await p_state.update_data(prompt_message_id=msg.message_id)
         except Exception:
             await call.answer("Сначала напишите /start боту в личку", show_alert=True)
