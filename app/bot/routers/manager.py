@@ -110,10 +110,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if prompt_message_id is not None:
             await message.bot.edit_message_text(
                 chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Комментарий принят.",
+                text="Принято",
                 reply_markup=None,
             )
-        await message.answer("Комментарий сохранён", reply_markup=await _menu(message.from_user.id))
+        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
 
     # ── Pause ─────────────────────────────────────────────────────────
 
@@ -173,10 +173,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if prompt_message_id is not None:
             await message.bot.edit_message_text(
                 chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Пауза установлена.",
+                text="Принято",
                 reply_markup=None,
             )
-        await message.answer("Пауза установлена", reply_markup=await _menu(message.from_user.id))
+        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
 
     # ── Resume ────────────────────────────────────────────────────────
 
@@ -236,10 +236,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if prompt_message_id is not None:
             await message.bot.edit_message_text(
                 chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Пауза снята.",
+                text="Принято",
                 reply_markup=None,
             )
-        await message.answer("Пауза снята", reply_markup=await _menu(message.from_user.id))
+        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
 
     # ── Terminate ─────────────────────────────────────────────────────
 
@@ -295,9 +295,9 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if prompt_message_id is not None:
             await message.bot.edit_message_text(
                 chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Закупка прекращена.",
+                text="Принято",
                 reply_markup=None,
             )
-        await message.answer("Закупка прекращена", reply_markup=await _menu(message.from_user.id))
+        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
 
     return router
