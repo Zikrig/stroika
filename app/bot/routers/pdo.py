@@ -147,6 +147,13 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if role != Role.PDO:
             await message.answer("Только роль ПДО может загрузить форму")
             return
+        filename = (message.document.file_name or "").strip()
+        if ".0" in filename:
+            await message.answer(
+                "В имени файла не должно быть «.0». Переименуйте файл (например, в «код заявки.xlsx» без .0) и отправьте снова.",
+                reply_markup=cancel_inline(),
+            )
+            return
         data = await state.get_data()
         request_id = data.get("target_request_id")
         target_chat_id = data["target_chat_id"]
