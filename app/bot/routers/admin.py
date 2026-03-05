@@ -8,7 +8,7 @@ from app.application.use_cases import cancel_request
 from app.bot.keyboards.menus import cancel_inline, new_request_description_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import get_request_actions_keyboard_group, publish_request_event
+from app.bot.routers._publish import get_request_actions_keyboard_group, safe_update_request_in_group
 from app.bot.states import ActionInputStates, ForemanCreateStates
 from app.config import get_settings
 from app.domain.enums import Role
@@ -73,11 +73,18 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         await state.clear()
         if req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=None,
-                note=message.text or "", note_label="Причина отмены",
+            err = await safe_update_request_in_group(
+                ctx=ctx,
+                publisher=publisher,
+                request=req,
+                target_chat_id=target_chat_id,
+                reply_markup=None,
+                note=message.text or "",
+                note_label="Причина отмены",
             )
+            if err:
+                await message.answer(err, reply_markup=await _menu(message.from_user.id))
+                return
         await message.answer("Заявка отменена", reply_markup=await _menu(message.from_user.id))
 
     # ── Repeat: запуск полного цикла создания заявки (описание, срок, с кем согласовано и т.д.) ─

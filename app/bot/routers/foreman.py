@@ -18,10 +18,9 @@ from app.bot.keyboards.menus import (
     request_view_inline,
 )
 from app.bot.formatters.request_card import _fmt_date
-from app.bot.routers._publish import get_request_actions_keyboard_group
+from app.bot.routers._publish import get_request_actions_keyboard_group, safe_update_request_in_group
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
-from app.bot.routers._publish import publish_request_event
 from app.bot.states import ActionInputStates, ForemanCreateStates, ForemanEditStates, GroupMenuStates
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
@@ -377,14 +376,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         fio = (message.text or message.caption or "").strip() or "-"
         updated = await ctx.requests.update_foreman_fields(request_id, {"approved_by": fio})
         if updated:
-            await publish_request_event(
+            err = await safe_update_request_in_group(
                 ctx=ctx,
                 publisher=publisher,
-                chat_id=updated["chat_id"],
                 request=updated,
+                target_chat_id=updated["chat_id"],
                 reply_markup=await get_request_actions_keyboard_group(ctx, updated),
-                log_event=False,
             )
+            if err:
+                await message.answer(err, reply_markup=await _menu(message.from_user.id))
+                return
         await message.answer(
             f"С кем согласовано: {fio}\nЗаявка {updated.get('request_code', '')} обновлена.",
             reply_markup=await _menu(message.from_user.id),
@@ -440,14 +441,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
 
         role = await _role(message.from_user.id)
-        await publish_request_event(
+        err = await safe_update_request_in_group(
             ctx=ctx,
             publisher=publisher,
-            chat_id=updated["chat_id"],
             request=updated,
+            target_chat_id=updated["chat_id"],
             reply_markup=await get_request_actions_keyboard_group(ctx, updated),
-            log_event=False,
         )
+        if err:
+            await message.answer(err, reply_markup=await _menu(message.from_user.id))
+            return
         await message.answer(f"Заявка {code} обновлена", reply_markup=await _menu(message.from_user.id))
 
     @router.message(ForemanEditStates.waiting_edit_description, F.chat.type == "private")
@@ -566,11 +569,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         if not req:
             await message.answer("Заявка не найдена", reply_markup=await _menu(message.from_user.id))
             return
-        role = await _role(message.from_user.id)
-        await publish_request_event(
-            ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-            request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+        err = await safe_update_request_in_group(
+            ctx=ctx,
+            publisher=publisher,
+            request=req,
+            target_chat_id=target_chat_id,
+            reply_markup=await get_request_actions_keyboard_group(ctx, req),
         )
+        if err:
+            await message.answer(err, reply_markup=await _menu(message.from_user.id))
+            return
         await message.answer("Получение (частично) зафиксировано", reply_markup=await _menu(message.from_user.id))
 
     def _delivery_photo_choice_inline() -> InlineKeyboardMarkup:
@@ -635,10 +643,17 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer()
             return
         if req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=None,
+            err = await safe_update_request_in_group(
+                ctx=ctx,
+                publisher=publisher,
+                request=req,
+                target_chat_id=target_chat_id,
+                reply_markup=None,
             )
+            if err:
+                await call.message.answer(err, reply_markup=await _menu(call.from_user.id))
+                await call.answer()
+                return
         await call.message.answer("Заявка закрыта (без фото)", reply_markup=await _menu(call.from_user.id))
         await call.answer()
 
@@ -692,10 +707,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 "attachment_type": "photo",
             }]
             await ctx.requests.add_attachments(request_id, last_event["id"], attachments)
-        await publish_request_event(
-            ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-            request=req, reply_markup=None,
+        err = await safe_update_request_in_group(
+            ctx=ctx,
+            publisher=publisher,
+            request=req,
+            target_chat_id=target_chat_id,
+            reply_markup=None,
         )
+        if err:
+            await message.answer(err, reply_markup=await _menu(message.from_user.id))
+            return
         await message.answer("Заявка закрыта, фото добавлено", reply_markup=await _menu(message.from_user.id))
 
     @router.message(

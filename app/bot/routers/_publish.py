@@ -1,3 +1,5 @@
+import logging
+
 from aiogram.types import InlineKeyboardMarkup
 
 from app.application.context import AppContext
@@ -5,6 +7,64 @@ from app.bot.formatters.request_card import _fmt_date, render_container_card, re
 from app.bot.keyboards.request_actions import request_actions_keyboard_group
 from app.domain.enums import EventType
 from app.infrastructure.telegram.publisher import TelegramPublisher
+
+logger = logging.getLogger("bot.debug")
+
+
+async def safe_update_request_in_group(
+    ctx: AppContext,
+    publisher: TelegramPublisher,
+    request: dict,
+    target_chat_id: int,
+    *,
+    source_message_id: int | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    note: str = "",
+    note_label: str = "Комментарий",
+) -> str | None:
+    """Обновляет карточку заявки в группе (редакт или публикация). Возвращает None при успехе, иначе строку ошибки (логирует исключение)."""
+    try:
+        if source_message_id is not None:
+            await edit_request_message(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                message_id=source_message_id,
+                request=request,
+                reply_markup=reply_markup,
+                note=note or None,
+                note_label=note_label,
+            )
+            events = await ctx.requests.get_events(request["id"])
+            if events:
+                info = await ctx.requests.get_latest_message_info(request["id"], target_chat_id)
+                ct = (info["content_type"] if info else "text")
+                await ctx.requests.add_message_link(
+                    request["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
+                )
+            await publish_event_reply(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request_id=request["id"],
+                root_message_id=source_message_id,
+                note=note or None,
+                note_label=note_label,
+            )
+        else:
+            await publish_request_event(
+                ctx=ctx,
+                publisher=publisher,
+                chat_id=target_chat_id,
+                request=request,
+                reply_markup=reply_markup,
+                note=note or None,
+                note_label=note_label,
+            )
+        return None
+    except Exception as e:
+        logger.exception("safe_update_request_in_group request_id=%s: %s", request.get("id"), e)
+        return "Действие сохранено, но не удалось обновить сообщение в группе."
 
 
 async def get_request_actions_keyboard_group(ctx: AppContext, request: dict) -> InlineKeyboardMarkup | None:

@@ -12,10 +12,8 @@ from app.bot.keyboards.request_actions import _format_request_label
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import (
-    edit_request_message,
     get_request_actions_keyboard_group,
-    publish_event_reply,
-    publish_request_event,
+    safe_update_request_in_group,
 )
 from app.bot.states import ActionInputStates
 from app.config import get_settings
@@ -60,22 +58,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await call.answer("Продолжите в личных сообщениях")
         return True
 
-    # ── Comment ───────────────────────────────────────────────────────
-
-    @router.callback_query(F.data.startswith("mgr_comment:"))
-    async def comment_click(call: CallbackQuery, state: FSMContext) -> None:
-        role = await _role(call.from_user.id)
-        if role != Role.MANAGER:
-            await call.answer("Недостаточно прав", show_alert=True)
-            return
-        request_id = call.data.split(":", maxsplit=1)[1]
-        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
-            await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
-            return
-        await _redirect_to_dm(call, state, ActionInputStates.waiting_manager_comment, "Введите комментарий руководителя", request_id)
-
-    @router.message(ActionInputStates.waiting_manager_comment, F.chat.type == "private")
-    async def comment_input(message: Message, state: FSMContext) -> None:
+    async def _process_dm_action(
+        message: Message,
+        state: FSMContext,
+        *,
+        execute_action,
+        note_label: str,
+        use_keyboard: bool = True,
+    ) -> None:
+        """Общий обработчик действий руководителя в ЛС (комментарий, пауза, снятие паузы, прекращение)."""
         data = await state.get_data()
         target_chat_id = data.get("target_chat_id")
         source_message_id = data.get("source_message_id")
@@ -107,73 +98,35 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         error: str | None = None
 
         try:
-            # 1) Пишем событие и обновляем карточку заявки / лог в группе.
-            req = await manager_actions.comment(ctx.requests, request_id, message.from_user.id, text)
+            try:
+                # Доменноe действие (запись события, смена статуса и т.п.).
+                req = await execute_action(request_id, text)
+            except ValueError as exc:
+                # Бизнес-ошибка — возвращаем текст как есть и не трогаем состояние:
+                # пользователь может скорректировать ввод.
+                await message.answer(str(exc))
+                return
             await state.clear()
-            if req and source_message_id is not None:
-                try:
-                    await edit_request_message(
-                        ctx=ctx,
-                        publisher=publisher,
-                        chat_id=target_chat_id,
-                        message_id=source_message_id,
-                        request=req,
-                        reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                        note=text,
-                        note_label="Комментарий руководителя",
-                    )
-                    events = await ctx.requests.get_events(req["id"])
-                    if events:
-                        info = await ctx.requests.get_latest_message_info(req["id"], target_chat_id)
-                        ct = (info["content_type"] if info else "text")
-                        await ctx.requests.add_message_link(
-                            req["id"],
-                            events[-1]["id"],
-                            target_chat_id,
-                            source_message_id,
-                            content_type=ct,
-                        )
-                    await publish_event_reply(
-                        ctx=ctx,
-                        publisher=publisher,
-                        chat_id=target_chat_id,
-                        request_id=req["id"],
-                        root_message_id=source_message_id,
-                        note=text,
-                        note_label="Комментарий руководителя",
-                    )
-                except Exception as e:
-                    # Если не смогли обновить карточку / лог в группе — всё равно
-                    # считаем комментарий принятым и отвечаем в личку.
-                    logger.exception(
-                        "comment_input: не удалось обновить карточку/лог в группе (request_id=%s): %s",
-                        request_id,
-                        e,
-                    )
-                    error = "Комментарий сохранён, но не удалось обновить сообщение в группе."
-            elif req:
-                try:
-                    await publish_request_event(
-                        ctx=ctx,
-                        publisher=publisher,
-                        chat_id=target_chat_id,
-                        request=req,
-                        reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                        note=text,
-                        note_label="Комментарий руководителя",
-                    )
-                except Exception as e:
-                    logger.exception(
-                        "comment_input: не удалось опубликовать событие в группе (request_id=%s): %s",
-                        request_id,
-                        e,
-                    )
-                    error = "Комментарий сохранён, но не удалось обновить сообщение в группе."
-        except Exception as e:
-            logger.exception("comment_input: не удалось сохранить комментарий (request_id=%s): %s", request_id, e)
-            error = "Не удалось сохранить комментарий, попробуйте ещё раз."
 
-        # 2) В любом случае стараемся закрыть диалоговое сообщение в личке.
+            if req:
+                reply_markup = await get_request_actions_keyboard_group(ctx, req) if use_keyboard else None
+                err = await safe_update_request_in_group(
+                    ctx=ctx,
+                    publisher=publisher,
+                    request=req,
+                    target_chat_id=target_chat_id,
+                    source_message_id=source_message_id,
+                    reply_markup=reply_markup,
+                    note=text,
+                    note_label=note_label,
+                )
+                if err:
+                    error = err
+        except Exception as e:
+            logger.exception("%s: не удалось выполнить действие (request_id=%s): %s", note_label, request_id, e)
+            error = "Не удалось выполнить действие, попробуйте ещё раз."
+
+        # В любом случае стараемся закрыть диалоговое сообщение в личке.
         if prompt_message_id is not None:
             try:
                 await message.bot.edit_message_text(
@@ -185,11 +138,37 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             except Exception:
                 pass
 
-        # 3) Сообщение пользователю — всегда что‑то отправляем.
+        # Сообщение пользователю — всегда что‑то отправляем.
         if error:
             await message.answer(error, reply_markup=await _menu(message.from_user.id))
         else:
             await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
+
+    # ── Comment ───────────────────────────────────────────────────────
+
+    @router.callback_query(F.data.startswith("mgr_comment:"))
+    async def comment_click(call: CallbackQuery, state: FSMContext) -> None:
+        role = await _role(call.from_user.id)
+        if role != Role.MANAGER:
+            await call.answer("Недостаточно прав", show_alert=True)
+            return
+        request_id = call.data.split(":", maxsplit=1)[1]
+        if not await is_latest_request_message(ctx, request_id, call.message.chat.id, call.message.message_id):
+            await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
+            return
+        await _redirect_to_dm(call, state, ActionInputStates.waiting_manager_comment, "Введите комментарий руководителя", request_id)
+
+    @router.message(ActionInputStates.waiting_manager_comment, F.chat.type == "private")
+    async def comment_input(message: Message, state: FSMContext) -> None:
+        async def _exec(request_id: str, text: str):
+            return await manager_actions.comment(ctx.requests, request_id, message.from_user.id, text)
+
+        await _process_dm_action(
+            message,
+            state,
+            execute_action=_exec,
+            note_label="Комментарий руководителя",
+        )
 
     # ── Pause ─────────────────────────────────────────────────────────
 
@@ -207,52 +186,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     @router.message(ActionInputStates.waiting_pause_reason, F.chat.type == "private")
     async def pause_input(message: Message, state: FSMContext) -> None:
-        data = await state.get_data()
-        target_chat_id = data["target_chat_id"]
-        source_message_id = data.get("source_message_id")
-        prompt_message_id = data.get("prompt_message_id")
-        try:
-            req = await pause_resume_request.pause(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
-        except ValueError as exc:
-            await message.answer(str(exc))
-            return
-        await state.clear()
-        if req and source_message_id is not None:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=target_chat_id, message_id=source_message_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                note=message.text or "", note_label="Причина паузы",
-            )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], target_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
-                )
-            await publish_event_reply(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=target_chat_id,
-                request_id=req["id"],
-                root_message_id=source_message_id,
-                note=message.text or "",
-                note_label="Причина паузы",
-            )
-        elif req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                note=message.text or "", note_label="Причина паузы",
-            )
-        if prompt_message_id is not None:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Принято",
-                reply_markup=None,
-            )
-        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
+        async def _exec(request_id: str, text: str):
+            return await pause_resume_request.pause(ctx.requests, request_id, message.from_user.id, text)
+
+        await _process_dm_action(
+            message,
+            state,
+            execute_action=_exec,
+            note_label="Причина паузы",
+        )
 
     # ── Resume ────────────────────────────────────────────────────────
 
@@ -270,52 +212,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     @router.message(ActionInputStates.waiting_resume_comment, F.chat.type == "private")
     async def resume_input(message: Message, state: FSMContext) -> None:
-        data = await state.get_data()
-        target_chat_id = data["target_chat_id"]
-        source_message_id = data.get("source_message_id")
-        prompt_message_id = data.get("prompt_message_id")
-        try:
-            req = await pause_resume_request.resume(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
-        except ValueError as exc:
-            await message.answer(str(exc))
-            return
-        await state.clear()
-        if req and source_message_id is not None:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=target_chat_id, message_id=source_message_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                note=message.text or "", note_label="Комментарий к снятию паузы",
-            )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], target_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
-                )
-            await publish_event_reply(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=target_chat_id,
-                request_id=req["id"],
-                root_message_id=source_message_id,
-                note=message.text or "",
-                note_label="Комментарий к снятию паузы",
-            )
-        elif req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-                note=message.text or "", note_label="Комментарий к снятию паузы",
-            )
-        if prompt_message_id is not None:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Принято",
-                reply_markup=None,
-            )
-        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
+        async def _exec(request_id: str, text: str):
+            return await pause_resume_request.resume(ctx.requests, request_id, message.from_user.id, text)
+
+        await _process_dm_action(
+            message,
+            state,
+            execute_action=_exec,
+            note_label="Комментарий к снятию паузы",
+        )
 
     # ── Terminate ─────────────────────────────────────────────────────
 
@@ -333,47 +238,15 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
     @router.message(ActionInputStates.waiting_terminate_reason, F.chat.type == "private")
     async def terminate_input(message: Message, state: FSMContext) -> None:
-        data = await state.get_data()
-        target_chat_id = data["target_chat_id"]
-        source_message_id = data.get("source_message_id")
-        prompt_message_id = data.get("prompt_message_id")
-        req = await manager_actions.terminate(ctx.requests, data["target_request_id"], message.from_user.id, message.text or "")
-        await state.clear()
-        if req and source_message_id is not None:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=target_chat_id, message_id=source_message_id,
-                request=req, reply_markup=None,
-                note=message.text or "", note_label="Причина прекращения",
-            )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], target_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
-                )
-            await publish_event_reply(
-                ctx=ctx,
-                publisher=publisher,
-                chat_id=target_chat_id,
-                request_id=req["id"],
-                root_message_id=source_message_id,
-                note=message.text or "",
-                note_label="Причина прекращения",
-            )
-        elif req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=None,
-                note=message.text or "", note_label="Причина прекращения",
-            )
-        if prompt_message_id is not None:
-            await message.bot.edit_message_text(
-                chat_id=message.chat.id, message_id=prompt_message_id,
-                text="Принято",
-                reply_markup=None,
-            )
-        await message.answer("Принято", reply_markup=await _menu(message.from_user.id))
+        async def _exec(request_id: str, text: str):
+            return await manager_actions.terminate(ctx.requests, request_id, message.from_user.id, text)
+
+        await _process_dm_action(
+            message,
+            state,
+            execute_action=_exec,
+            note_label="Причина прекращения",
+            use_keyboard=False,
+        )
 
     return router

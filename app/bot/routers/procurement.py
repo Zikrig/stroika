@@ -9,10 +9,8 @@ from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import (
-    edit_request_message,
     get_request_actions_keyboard_group,
-    publish_event_reply,
-    publish_request_event,
+    safe_update_request_in_group,
 )
 from app.bot.states import ActionInputStates
 from app.config import get_settings
@@ -50,25 +48,17 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer(str(exc), show_alert=True)
             return
         if req:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=group_chat_id, message_id=call.message.message_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-            )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], group_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
-                )
-            await publish_event_reply(
+            err = await safe_update_request_in_group(
                 ctx=ctx,
                 publisher=publisher,
-                chat_id=group_chat_id,
-                request_id=req["id"],
-                root_message_id=call.message.message_id,
+                request=req,
+                target_chat_id=group_chat_id,
+                source_message_id=call.message.message_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
+            if err:
+                await call.answer(err, show_alert=True)
+                return
         await call.answer("Заявка взята в работу")
 
     # ── Purchased (group → DM FSM) ───────────────────────────────────
@@ -106,10 +96,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         await state.clear()
         if req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+            err = await safe_update_request_in_group(
+                ctx=ctx,
+                publisher=publisher,
+                request=req,
+                target_chat_id=target_chat_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
+            if err:
+                await message.answer(err, reply_markup=await _menu(message.from_user.id))
+                return
         await message.answer("Этап 'Закуплено' сохранен", reply_markup=await _menu(message.from_user.id))
 
     # ── Shipped (group → DM FSM) ─────────────────────────────────────
@@ -147,10 +143,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             return
         await state.clear()
         if req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+            err = await safe_update_request_in_group(
+                ctx=ctx,
+                publisher=publisher,
+                request=req,
+                target_chat_id=target_chat_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
+            if err:
+                await message.answer(err, reply_markup=await _menu(message.from_user.id))
+                return
         await message.answer("Этап 'Отгружено' сохранен", reply_markup=await _menu(message.from_user.id))
 
     # ── Return to PDO (one-click) ────────────────────────────────────
@@ -172,10 +174,16 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer(str(exc), show_alert=True)
             return
         if req:
-            await publish_request_event(
-                ctx=ctx, publisher=publisher, chat_id=group_chat_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+            err = await safe_update_request_in_group(
+                ctx=ctx,
+                publisher=publisher,
+                request=req,
+                target_chat_id=group_chat_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
+            if err:
+                await call.answer(err, show_alert=True)
+                return
         await call.answer("Возвращено в ПДО")
 
     return router

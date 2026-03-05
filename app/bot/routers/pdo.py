@@ -1,4 +1,5 @@
 # pyright: reportUnusedFunction=false
+import logging
 from io import BytesIO
 
 from aiogram import F, Router
@@ -11,11 +12,10 @@ from app.bot.keyboards.menus import cancel_inline, private_main_menu_inline
 from app.bot.routers._guards import is_latest_request_message
 from app.bot.routers._helpers import private_fsm
 from app.bot.routers._publish import (
-    edit_request_message,
     get_request_actions_keyboard_group,
     publish_container_event,
-    publish_event_reply,
     publish_request_event,
+    safe_update_request_in_group,
 )
 from app.bot.states import ActionInputStates
 from app.config import get_settings
@@ -23,6 +23,8 @@ from app.domain.enums import Role
 from app.infrastructure.excel.parser import parse_pdo_excel
 from app.infrastructure.excel.template_builder import build_pdo_template
 from app.infrastructure.telegram.publisher import TelegramPublisher
+
+logger = logging.getLogger("bot.debug")
 
 
 def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
@@ -55,25 +57,17 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer(str(exc), show_alert=True)
             return
         if req:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=group_chat_id, message_id=call.message.message_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
-            )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], group_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
-                )
-            await publish_event_reply(
+            err = await safe_update_request_in_group(
                 ctx=ctx,
                 publisher=publisher,
-                chat_id=group_chat_id,
-                request_id=req["id"],
-                root_message_id=call.message.message_id,
+                request=req,
+                target_chat_id=group_chat_id,
+                source_message_id=call.message.message_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
+            if err:
+                await call.answer(err, show_alert=True)
+                return
         await call.answer("Заявка взята ПДО")
 
     # ── Template + Excel upload (group card → DM FSM) ─────────────────
@@ -100,18 +94,17 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer(str(exc), show_alert=True)
             return
         if req:
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=group_chat_id, message_id=call.message.message_id,
-                request=req, reply_markup=await get_request_actions_keyboard_group(ctx, req),
+            err = await safe_update_request_in_group(
+                ctx=ctx,
+                publisher=publisher,
+                request=req,
+                target_chat_id=group_chat_id,
+                source_message_id=call.message.message_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, req),
             )
-            events = await ctx.requests.get_events(req["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(req["id"], group_chat_id)
-                ct = info["content_type"] if info else "text"
-                await ctx.requests.add_message_link(
-                    req["id"], events[-1]["id"], group_chat_id, call.message.message_id, content_type=ct,
-                )
+            if err:
+                await call.answer(err, show_alert=True)
+                return
 
         p_state = private_fsm(state, call.bot.id, call.from_user.id)
         await p_state.set_state(ActionInputStates.waiting_pdo_excel)
@@ -187,37 +180,37 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
         if len(created) == 1 and source_message_id is not None:
             item = created[0]
-            await edit_request_message(
-                ctx=ctx, publisher=publisher,
-                chat_id=target_chat_id, message_id=source_message_id,
-                request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
-            )
-            events = await ctx.requests.get_events(item["id"])
-            if events:
-                info = await ctx.requests.get_latest_message_info(item["id"], target_chat_id)
-                ct = (info["content_type"] if info else "text")
-                await ctx.requests.add_message_link(
-                    item["id"], events[-1]["id"], target_chat_id, source_message_id, content_type=ct,
-                )
-            await publish_event_reply(
+            err = await safe_update_request_in_group(
                 ctx=ctx,
                 publisher=publisher,
-                chat_id=target_chat_id,
-                request_id=item["id"],
-                root_message_id=source_message_id,
+                request=item,
+                target_chat_id=target_chat_id,
+                source_message_id=source_message_id,
+                reply_markup=await get_request_actions_keyboard_group(ctx, item),
             )
+            if err:
+                await message.answer(err, reply_markup=await _menu(message.from_user.id))
+                await message.answer(hint, reply_markup=await _menu(message.from_user.id))
+                return
         else:
-            if len(created) > 1:
-                parent = await ctx.requests.get_request(request_id)
-                if parent:
-                    await publish_container_event(
+            try:
+                if len(created) > 1:
+                    parent = await ctx.requests.get_request(request_id)
+                    if parent:
+                        await publish_container_event(
+                            ctx=ctx, publisher=publisher, chat_id=target_chat_id,
+                            container=parent, child_codes=[item["request_code"] for item in created],
+                        )
+                for item in created:
+                    await publish_request_event(
                         ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                        container=parent, child_codes=[item["request_code"] for item in created],
+                        request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
                     )
-            for item in created:
-                await publish_request_event(
-                    ctx=ctx, publisher=publisher, chat_id=target_chat_id,
-                    request=item, reply_markup=await get_request_actions_keyboard_group(ctx, item),
+            except Exception as e:
+                logger.exception("pdo_upload_excel: не удалось обновить группу (multi): %s", e)
+                await message.answer(
+                    "Форма обработана, но не удалось обновить сообщения в группе.",
+                    reply_markup=await _menu(message.from_user.id),
                 )
         await message.answer(hint, reply_markup=await _menu(message.from_user.id))
 
