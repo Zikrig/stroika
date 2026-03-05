@@ -612,6 +612,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await p_state.update_data(
             target_request_id=request_id,
             target_chat_id=group_chat_id,
+            source_message_id=call.message.message_id,
         )
         try:
             req = await ctx.requests.get_request(request_id)
@@ -635,6 +636,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         data = await state.get_data()
         request_id = data.get("target_request_id")
         target_chat_id = data.get("target_chat_id")
+        source_message_id = data.get("source_message_id")
         await state.clear()
         if not request_id or not target_chat_id:
             await call.message.answer("Сессия сброшена.", reply_markup=await _menu(call.from_user.id))
@@ -652,6 +654,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                 publisher=publisher,
                 request=req,
                 target_chat_id=target_chat_id,
+                source_message_id=source_message_id,
                 reply_markup=None,
             )
             if err:
@@ -689,6 +692,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         data = await state.get_data()
         request_id = data.get("target_request_id")
         target_chat_id = data.get("target_chat_id")
+        source_message_id = data.get("source_message_id")
         await state.clear()
         if not request_id or not target_chat_id:
             await message.answer("Сессия сброшена.", reply_markup=await _menu(message.from_user.id))
@@ -716,6 +720,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             publisher=publisher,
             request=req,
             target_chat_id=target_chat_id,
+            source_message_id=source_message_id,
             reply_markup=None,
         )
         if err:

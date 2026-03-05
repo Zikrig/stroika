@@ -5,31 +5,30 @@ from openpyxl import load_workbook
 from app.domain.rules import validate_pdo_formula
 
 
-def parse_pdo_excel(raw: bytes) -> list[dict]:
-    wb = load_workbook(filename=BytesIO(raw), data_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
-    if len(rows) < 2:
-        raise ValueError("Файл пустой")
-    header = [str(v).strip() if v is not None else "" for v in rows[0]]
-    expected = [
-        "ID заявки",
-        "С кем согласовано",
-        "Дата/время заявки",
-        "Дата потребности",
-        "Подобъект",
-        "Прораб",
-        "Наименование от прораба",
-        "Наименование по 1С",
-        "Код 1С",
-        "Запрошено",
-        "Ед. изм.",
-        "Со склада",
-        "В закупку",
-    ]
-    if header[: len(expected)] != expected:
-        raise ValueError("Неверные колонки Excel-формы")
+EXPECTED_HEADERS = [
+    "ID заявки",
+    "С кем согласовано",
+    "Дата/время заявки",
+    "Дата потребности",
+    "Подобъект",
+    "Прораб",
+    "Наименование от прораба",
+    "Наименование по 1С",
+    "Код 1С",
+    "Запрошено",
+    "Ед. изм.",
+    "Со склада",
+    "В закупку",
+]
 
+
+def _parse_sheet_rows(rows: list[tuple]) -> list[dict]:
+    """Из уже прочитанных строк листа (первая — заголовок) собирает список словарей."""
+    if len(rows) < 2:
+        return []
+    header = [str(v).strip() if v is not None else "" for v in rows[0]]
+    if header[: len(EXPECTED_HEADERS)] != EXPECTED_HEADERS:
+        return []
     result: list[dict] = []
     for line in rows[1:]:
         if line[0] is None:
@@ -55,6 +54,17 @@ def parse_pdo_excel(raw: bytes) -> list[dict]:
                 "to_purchase_qty": to_purchase,
             }
         )
+    return result
+
+
+def parse_pdo_excel(raw: bytes) -> list[dict]:
+    """Читает все листы книги, находит листы с ожидаемым заголовком формы ПДО и объединяет строки.
+    Листы с названием, содержащим .0 (например шаблон по заявке), не пропускаются."""
+    wb = load_workbook(filename=BytesIO(raw), data_only=True)
+    result: list[dict] = []
+    for ws in wb.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
+        result.extend(_parse_sheet_rows(rows))
     if not result:
-        raise ValueError("Нет строк с данными")
+        raise ValueError("Нет строк с данными или неверные колонки Excel-формы")
     return result
