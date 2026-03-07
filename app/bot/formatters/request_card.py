@@ -150,13 +150,15 @@ def render_request_card(
             if not request.get("responsible_role")
             else f"👤 Ответственный: {role_title(request['responsible_role'])}"
         ),
-        (
-            "📦 Потребность: "
-            f"Общая {_fmt_qty(request.get('requested_qty'))} / "
-            f"Со склада {_fmt_qty(request.get('from_stock_qty'))} / "
-            f"В закупку {_fmt_qty(request.get('to_purchase_qty'))} {unit}"
-        ).rstrip(),
-        f"🚚 Закупка: ETA отгрузки {eta_shipping} / Отгружено {shipped_at} / ETA на объект {eta_arrival}",
+        "",
+        "🚚 Закупка",
+        f"План отгрузки: {eta_shipping}",
+        f"Отгружено: {shipped_at}",
+        f"Ожидаем на объекте: {eta_arrival}",
+        "",
+        "📦 Распределение",
+        f"Со склада: {_fmt_qty(request.get('from_stock_qty'))}",
+        f"В закупку: {_fmt_qty(request.get('to_purchase_qty'))}",
         (
             f"📍 На объекте: Получено {_fmt_qty(request.get('received_total_qty'))} / "
             f"Остаток {_fmt_qty(request.get('remaining_qty'))} {unit}"
