@@ -38,7 +38,10 @@ def _buttons_for_role(request: dict, stage: StageCode, role: Role) -> list[list[
             )
         ])
     if role == Role.PROCUREMENT:
-        if stage == StageCode.TRANSFERRED_TO_PROCUREMENT:
+        # Когда со склада получено 100% (отгрузка/получение) — кнопки закупки к заявке не показываем
+        if stage in {StageCode.SHIPPED, StageCode.PARTIALLY_RECEIVED, StageCode.FULLY_RECEIVED}:
+            pass  # кнопок нет, дальше не добавляем
+        elif stage == StageCode.TRANSFERRED_TO_PROCUREMENT:
             out.append([
                 InlineKeyboardButton(
                     text=f"{emoji} К заявке — {label}",
@@ -85,7 +88,15 @@ def _buttons_for_role(request: dict, stage: StageCode, role: Role) -> list[list[
                     callback_data=f"cancel:{request_id}",
                 )
             ])
-        if stage in {StageCode.SHIPPED, StageCode.PARTIALLY_RECEIVED}:
+        if stage == StageCode.SHIPPED:
+            # Со склада отгружено 100% — только «Получено полностью», без «частично»
+            out.append([
+                InlineKeyboardButton(
+                    text=f"{emoji} Получено полностью — {label}",
+                    callback_data=f"received_full:{request_id}",
+                )
+            ])
+        if stage == StageCode.PARTIALLY_RECEIVED:
             out.append([
                 InlineKeyboardButton(
                     text=f"{emoji} Получено частично — {label}",
@@ -134,7 +145,7 @@ def _buttons_for_role(request: dict, stage: StageCode, role: Role) -> list[list[
             ])
         out.append([
             InlineKeyboardButton(
-                text=f"{emoji} Прекратить закупку — {label}",
+                text=f"{emoji} Отменить заявку — {label}",
                 callback_data=f"terminate:{request_id}",
             )
         ])
