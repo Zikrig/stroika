@@ -48,7 +48,7 @@ def _name_from_foreman_cell(name: str | None) -> str:
 
 
 def _fmt_qty(value: object) -> float:
-    """Число для ячейки (Со склада / В закупку)."""
+    """Число для ячейки (Запрошено и др.)."""
     if value is None:
         return 0.0
     try:
@@ -77,13 +77,8 @@ def build_pdo_template(
     nomenclature_1c = (request.get("nomenclature_1c") or "").strip()
     code_1c = (request.get("code_1c") or "").strip()
     requested_qty = _fmt_qty(request.get("requested_qty"))
-    unit = (request.get("unit") or "шт").strip()
-    from_stock_qty = _fmt_qty(request.get("from_stock_qty"))
-    to_purchase_qty = _fmt_qty(request.get("to_purchase_qty"))
-    # Если распределение ещё не задано — по умолчанию всё в закупку
-    if from_stock_qty == 0.0 and to_purchase_qty == 0.0 and requested_qty:
-        to_purchase_qty = requested_qty
 
+    # Ед. изм., Со склада, В закупку — не подставляем, заполняет ПДО
     row = [
         request_code,
         approved_by,
@@ -95,9 +90,9 @@ def build_pdo_template(
         nomenclature_1c,
         code_1c,
         requested_qty,
-        unit,
-        from_stock_qty,
-        to_purchase_qty,
+        "",  # Ед. изм.
+        "",  # Со склада
+        "",  # В закупку
     ]
     ws.append(row)
     stream = BytesIO()
