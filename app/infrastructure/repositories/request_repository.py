@@ -134,9 +134,15 @@ class RequestRepository:
             await conn.close()
 
     async def list_requests_paginated(
-        self, chat_id: int, archived: bool = False, *, limit: int = 50, offset: int = 0,
+        self,
+        chat_id: int,
+        archived: bool = False,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        stage_codes: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Return (page_items, total_count) for a chat (object)."""
+        """Return (page_items, total_count) for a chat (object). stage_codes: фильтр по этапам (для ПДО/закупки)."""
         closed = [StatusCode.CLOSED.value, StatusCode.CANCELLED.value, StatusCode.TERMINATED.value]
         conn = await self.db.connect()
         try:
@@ -147,6 +153,10 @@ class RequestRepository:
             else:
                 base += " AND status_code NOT IN (?, ?, ?)"
             params.extend(closed)
+            if stage_codes:
+                placeholders = ", ".join("?" for _ in stage_codes)
+                base += f" AND stage_code IN ({placeholders})"
+                params.extend(stage_codes)
             cnt_cur = await conn.execute(f"SELECT COUNT(*) AS cnt {base}", tuple(params))
             total = (await cnt_cur.fetchone())["cnt"]
             sql = f"SELECT * {base} ORDER BY created_at DESC LIMIT ? OFFSET ?"

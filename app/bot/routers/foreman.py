@@ -17,6 +17,7 @@ from app.bot.keyboards.menus import (
     request_list_inline,
     request_view_inline,
 )
+from app.bot.keyboards.request_actions import received_submenu_keyboard
 from app.bot.formatters.request_card import _fmt_date
 from app.bot.routers._publish import (
     get_request_actions_keyboard_group,
@@ -231,13 +232,27 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             reply_markup=request_list_inline(items, page, total, lt),
         )
 
+    # Этапы, в которых ПДО/закупка имеют действия — только такие заявки показываем в «Активные»
+    _PDO_STAGES = [StageCode.CREATED.value, StageCode.PDO_PROCESSING.value]
+    _PROC_STAGES = [
+        StageCode.TRANSFERRED_TO_PROCUREMENT.value,
+        StageCode.PROCUREMENT_IN_WORK.value,
+        StageCode.PURCHASED.value,
+    ]
+
     async def _send_request_page_by_chat(
-        message: Message, chat_id: int, user_id: int, archived: bool, page: int,
+        message: Message, chat_id: int, user_id: int, archived: bool, page: int, role: Role | None = None,
     ) -> None:
-        """List by object (for PDO, procurement, manager, viewer)."""
+        """List by object (for PDO, procurement, manager, viewer). Для ПДО/закупки в активных — только их этапы."""
         lt = "r" if archived else "a"
+        stage_codes: list[str] | None = None
+        if not archived and role is not None:
+            if role == Role.PDO:
+                stage_codes = _PDO_STAGES
+            elif role == Role.PROCUREMENT:
+                stage_codes = _PROC_STAGES
         items, total = await ctx.requests.list_requests_paginated(
-            chat_id, archived=archived, limit=PAGE_SIZE, offset=page * PAGE_SIZE,
+            chat_id, archived=archived, limit=PAGE_SIZE, offset=page * PAGE_SIZE, stage_codes=stage_codes,
         )
         if not items:
             label = "Архив пуст" if archived else "Активных заявок нет"
@@ -257,7 +272,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer()
             return
         await _send_request_page_by_chat(
-            call.message, ctx.group_chat_id, call.from_user.id, archived=False, page=0,
+            call.message, ctx.group_chat_id, call.from_user.id, archived=False, page=0, role=role,
         )
         await call.answer()
 
@@ -270,7 +285,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
             await call.answer()
             return
         await _send_request_page_by_chat(
-            call.message, ctx.group_chat_id, call.from_user.id, archived=True, page=0,
+            call.message, ctx.group_chat_id, call.from_user.id, archived=True, page=0, role=role,
         )
         await call.answer()
 
@@ -280,9 +295,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         parts = call.data.split(":")
         lt, page = parts[1], int(parts[2])
         chat_id = int(parts[3]) if len(parts) > 3 else None
+        role = await _role(call.from_user.id)
         if chat_id is not None:
             await _send_request_page_by_chat(
-                call.message, chat_id, call.from_user.id, archived=(lt == "r"), page=page,
+                call.message, chat_id, call.from_user.id, archived=(lt == "r"), page=page, role=role,
             )
         else:
             await _send_request_page(call.message, call.from_user.id, archived=(lt == "r"), page=page)
@@ -482,6 +498,58 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         await message.answer("Заявка не найдена", reply_markup=await _menu(message.from_user.id))
 
     # ── Received partial / full (group card callbacks → DM) ───────────
+
+    @router.callback_query(F.data.startswith("received_menu:"))
+    async def received_menu_click(call: CallbackQuery) -> None:
+        """По «Получено» показываем подменю: Получено полностью / Получено частично."""
+        role = await _role(call.from_user.id)
+        if role != Role.FOREMAN:
+            await call.answer("Недостаточно прав", show_alert=True)
+            return
+        request_id = call.data.split(":", maxsplit=1)[1]
+        group_chat_id = call.message.chat.id
+        if not await is_latest_request_message(ctx, request_id, group_chat_id, call.message.message_id):
+            await call.answer("Карточка устарела. Используйте последнее сообщение по заявке.", show_alert=True)
+            return
+        req = await ctx.requests.get_request(request_id)
+        if not req:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+        keyboard = received_submenu_keyboard(req)
+        try:
+            await call.bot.edit_message_reply_markup(
+                chat_id=group_chat_id,
+                message_id=call.message.message_id,
+                reply_markup=keyboard,
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in (e.message or "").lower():
+                raise
+        await call.answer()
+
+    @router.callback_query(F.data.startswith("received_menu_back:"))
+    async def received_menu_back_click(call: CallbackQuery) -> None:
+        """Возврат из подменю «Получено» к основной клавиатуре карточки."""
+        request_id = call.data.split(":", maxsplit=1)[1]
+        group_chat_id = call.message.chat.id
+        req = await ctx.requests.get_request(request_id)
+        if not req:
+            await call.answer("Заявка не найдена", show_alert=True)
+            return
+        reply_markup = await get_request_actions_keyboard_group(ctx, req)
+        if reply_markup is None:
+            await call.answer()
+            return
+        try:
+            await call.bot.edit_message_reply_markup(
+                chat_id=group_chat_id,
+                message_id=call.message.message_id,
+                reply_markup=reply_markup,
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in (e.message or "").lower():
+                raise
+        await call.answer()
 
     @router.callback_query(F.data.startswith("received_partial:"))
     async def received_partial_click(call: CallbackQuery, state: FSMContext) -> None:

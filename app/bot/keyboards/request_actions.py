@@ -89,11 +89,11 @@ def _buttons_for_role(request: dict, stage: StageCode, role: Role) -> list[list[
                 )
             ])
         if stage == StageCode.SHIPPED:
-            # Со склада отгружено 100% — только «Получено полностью», без «частично»
+            # Со склада: одна кнопка «Получено» → по клику показываем «полностью» / «частично»
             out.append([
                 InlineKeyboardButton(
-                    text=f"{emoji} Получено полностью — {label}",
-                    callback_data=f"received_full:{request_id}",
+                    text=f"{emoji} Получено — {label}",
+                    callback_data=f"received_menu:{request_id}",
                 )
             ])
         if stage == StageCode.PARTIALLY_RECEIVED:
@@ -159,6 +159,30 @@ def request_actions_keyboard(request: dict, role: Role) -> InlineKeyboardMarkup 
     if not buttons:
         return None
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def received_submenu_keyboard(request: dict) -> InlineKeyboardMarkup:
+    """Клавиатура «Получено полностью» / «Получено частично» после нажатия «Получено» (этап SHIPPED)."""
+    emoji = role_emoji(Role.FOREMAN)
+    request_id = request["id"]
+    label = _format_request_label(request)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{emoji} Получено полностью — {label}",
+                    callback_data=f"received_full:{request_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"{emoji} Получено частично — {label}",
+                    callback_data=f"received_partial:{request_id}",
+                )
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data=f"received_menu_back:{request_id}")],
+        ]
+    )
 
 
 def _format_in_work_label(role_label: str, user: dict | None) -> str:
