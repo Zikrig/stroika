@@ -181,8 +181,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
 
         code = req.get("request_code", "")
         hint = (
-            f"Форма ПДО обработана. Напоминание: сохраняйте обработанные файлы под именем «{code}.xlsx» (без .0), "
-            f"а исходный бланк у вас остаётся «{code}.0.xlsx» — так в истории на компьютере видно, что исходная заявка, а что обработанная."
+            f"Форма ПДО обработана"
         )
 
         if len(created) == 1 and source_message_id is not None:
