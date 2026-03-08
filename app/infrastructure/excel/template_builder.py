@@ -47,6 +47,16 @@ def _name_from_foreman_cell(name: str | None) -> str:
     return name.strip()
 
 
+def _fmt_qty(value: object) -> float:
+    """Число для ячейки (Со склада / В закупку)."""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def build_pdo_template(
     request: dict,
     foreman_display_name: str | None = None,
@@ -64,6 +74,15 @@ def build_pdo_template(
     subobject = (request.get("subobject_name") or "").strip()
     foreman_name = (foreman_display_name or "").strip()
     name_from_foreman = _name_from_foreman_cell(request.get("name_from_foreman"))
+    nomenclature_1c = (request.get("nomenclature_1c") or "").strip()
+    code_1c = (request.get("code_1c") or "").strip()
+    requested_qty = _fmt_qty(request.get("requested_qty"))
+    unit = (request.get("unit") or "шт").strip()
+    from_stock_qty = _fmt_qty(request.get("from_stock_qty"))
+    to_purchase_qty = _fmt_qty(request.get("to_purchase_qty"))
+    # Если распределение ещё не задано — по умолчанию всё в закупку
+    if from_stock_qty == 0.0 and to_purchase_qty == 0.0 and requested_qty:
+        to_purchase_qty = requested_qty
 
     row = [
         request_code,
@@ -73,12 +92,12 @@ def build_pdo_template(
         subobject,
         foreman_name,
         name_from_foreman,
-        "",  # Наименование по 1С
-        "",  # Код 1С
-        request.get("requested_qty") or "",
-        request.get("unit") or "шт",
-        "",  # Со склада
-        "",  # В закупку
+        nomenclature_1c,
+        code_1c,
+        requested_qty,
+        unit,
+        from_stock_qty,
+        to_purchase_qty,
     ]
     ws.append(row)
     stream = BytesIO()

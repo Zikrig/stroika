@@ -12,9 +12,9 @@ async def execute(requests: RequestRepository, parent_request: dict, rows: list[
 
     if len(rows) == 1:
         row = rows[0]
-        from_stock = float(row.get("from_stock_qty") or 0)
         to_purchase = float(row.get("to_purchase_qty") or 0)
-        if from_stock > 0 and to_purchase <= 0:
+        # Закупаем 0 — кнопки закупки не показываем, сразу к прорабу (как будто всё уже отгружено)
+        if to_purchase <= 0:
             status = StatusCode.FORWARDED
             stage = StageCode.SHIPPED
             responsible_role = Role.FOREMAN
@@ -71,6 +71,15 @@ async def execute(requests: RequestRepository, parent_request: dict, rows: list[
     )
 
     for idx, row in enumerate(rows, start=1):
+        to_purchase = float(row.get("to_purchase_qty") or 0)
+        if to_purchase <= 0:
+            child_status = StatusCode.FORWARDED.value
+            child_stage = StageCode.SHIPPED.value
+            child_responsible = Role.FOREMAN.value
+        else:
+            child_status = StatusCode.WAITING.value
+            child_stage = StageCode.TRANSFERRED_TO_PROCUREMENT.value
+            child_responsible = Role.PROCUREMENT.value
         code = child_code(parent_request["request_code"], idx)
         child_id = await requests.create_request(
             {
@@ -89,9 +98,9 @@ async def execute(requests: RequestRepository, parent_request: dict, rows: list[
                 "to_purchase_qty": row["to_purchase_qty"],
                 "remaining_qty": row["requested_qty"],
                 "need_by": row["need_by"],
-                "status_code": StatusCode.WAITING.value,
-                "stage_code": StageCode.TRANSFERRED_TO_PROCUREMENT.value,
-                "responsible_role": Role.PROCUREMENT.value,
+                "status_code": child_status,
+                "stage_code": child_stage,
+                "responsible_role": child_responsible,
             }
         )
         await requests.insert_request_item(child_id, idx, row)
