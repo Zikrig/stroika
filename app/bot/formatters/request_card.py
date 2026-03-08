@@ -115,7 +115,6 @@ def render_request_card(
     note_label: str = "Комментарий",
     foreman_info: dict | None = None,
 ) -> str:
-    unit = request.get("unit") or ""
     status_code = str(request.get("status_code") or "")
     stage_code = str(request.get("stage_code") or "")
     eta_shipping, shipped_at, eta_arrival = _latest_procurement_dates(events)
@@ -129,7 +128,7 @@ def render_request_card(
         f"📝 Наименование от прораба: {request.get('name_from_foreman') or '-'}",
         f"📦 Номенклатура 1С: {request.get('nomenclature_1c') or '-'}",
         f"🔢 Код 1С: {request.get('code_1c') or '-'}",
-        f"📏 Запрошено: {_fmt_qty(request.get('requested_qty'))} {unit}".rstrip(),
+        f"📏 Запрошено: {_fmt_qty(request.get('requested_qty'))}",
         f"📅 Требуется до: {request.get('need_by') or '-'}",
         f"🕒 Дата создания: {_fmt_date(request.get('created_at'))}",
         (
@@ -156,13 +155,11 @@ def render_request_card(
         f"Отгружено: {shipped_at}",
         f"Ожидаем на объекте: {eta_arrival}",
         "",
-        "📦 Распределение",
-        f"Со склада: {_fmt_qty(request.get('from_stock_qty'))}",
-        f"В закупку: {_fmt_qty(request.get('to_purchase_qty'))}",
+        "📦 На объекте",
         (
-            f"📍 На объекте: Получено {_fmt_qty(request.get('received_total_qty'))} / "
-            f"Остаток {_fmt_qty(request.get('remaining_qty'))} {unit}"
-        ).rstrip(),
+            f"Получено {_fmt_qty(request.get('received_total_qty'))} / "
+            f"Остаток {_fmt_qty(request.get('remaining_qty'))}"
+        ),
     ]
     if note:
         lines.extend(["", f"{note_label}: {note}"])
