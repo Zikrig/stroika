@@ -82,6 +82,43 @@ def get_router(ctx: AppContext) -> Router:
         except Exception:
             await message.answer("Не удалось написать вам в личку. Сначала откройте ЛС с ботом и нажмите /start.")
 
+    # ── assign role by forwarding message to bot (private) ─────────────
+    @router.message(F.chat.type == "private", F.forward_from)
+    async def set_role_by_forward(message: Message) -> None:
+        """Admin forwards user's message to bot DM → bot offers role buttons."""
+        if not _is_admin(message.from_user.id):
+            # silently ignore for non-admins to не засорять личку
+            return
+
+        target = message.forward_from
+        if not target:
+            await message.answer(
+                "Не удалось определить пользователя по пересланному сообщению.\n"
+                "Перешлите обычное сообщение пользователя (не из канала и не анонимное)."
+            )
+            return
+
+        await ctx.roles.upsert_user(target.id, target.username, target.full_name)
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Прораб", callback_data=f"set_user_role:{target.id}:foreman")],
+                [InlineKeyboardButton(text="ПДО", callback_data=f"set_user_role:{target.id}:pdo")],
+                [InlineKeyboardButton(text="Закупка", callback_data=f"set_user_role:{target.id}:procurement")],
+                [InlineKeyboardButton(text="Руководитель", callback_data=f"set_user_role:{target.id}:manager")],
+                [InlineKeyboardButton(text="Зритель", callback_data=f"set_user_role:{target.id}:viewer")],
+                [InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")],
+            ]
+        )
+
+        await message.answer(
+            (
+                f"Назначить роль пользователю {target.full_name} (id={target.id}).\n"
+                "Выберите роль:"
+            ),
+            reply_markup=keyboard,
+        )
+
     # ── cancel_flow (universal) ───────────────────────────────────────
     @router.callback_query(F.data == "cancel_flow")
     async def cancel_flow(call: CallbackQuery, state: FSMContext) -> None:
@@ -122,9 +159,9 @@ def get_router(ctx: AppContext) -> Router:
         role = await ctx.roles.get_global_role(call.from_user.id)
         await call.message.answer(
             "Назначение роли другому пользователю:\n"
-            "1) В группе ответьте на сообщение пользователя командой /set\n"
-            "2) В личку придёт сообщение с кнопками ролей\n"
-            "3) Нажмите нужную роль",
+            "1) В группе: ответьте на сообщение пользователя командой /set — в личку придёт сообщение с кнопками ролей.\n"
+            "2) В личке с ботом: перешлите боту любое сообщение пользователя — бот предложит кнопки с ролями.\n"
+            "3) В обоих случаях нажмите нужную роль.",
             reply_markup=private_main_menu_inline(role=role, is_admin=True),
         )
         await call.answer()
