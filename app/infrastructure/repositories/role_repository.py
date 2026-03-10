@@ -91,6 +91,15 @@ class RoleRepository:
         finally:
             await conn.close()
 
+    async def clear_global_role(self, user_id: int) -> None:
+        """Remove global role for user (разжаловать до 'без роли')."""
+        conn = await self.db.connect()
+        try:
+            await conn.execute("DELETE FROM user_roles WHERE user_id=?", (user_id,))
+            await conn.commit()
+        finally:
+            await conn.close()
+
     async def get_global_role(self, user_id: int) -> Role | None:
         conn = await self.db.connect()
         try:

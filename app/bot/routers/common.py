@@ -66,6 +66,7 @@ def get_router(ctx: AppContext) -> Router:
                 [InlineKeyboardButton(text="Закупка", callback_data=f"set_user_role:{target.id}:procurement")],
                 [InlineKeyboardButton(text="Руководитель", callback_data=f"set_user_role:{target.id}:manager")],
                 [InlineKeyboardButton(text="Зритель", callback_data=f"set_user_role:{target.id}:viewer")],
+                [InlineKeyboardButton(text="Разжаловать", callback_data=f"unset_user_role:{target.id}")],
                 [InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")],
             ]
         )
@@ -107,6 +108,7 @@ def get_router(ctx: AppContext) -> Router:
                 [InlineKeyboardButton(text="Закупка", callback_data=f"set_user_role:{target.id}:procurement")],
                 [InlineKeyboardButton(text="Руководитель", callback_data=f"set_user_role:{target.id}:manager")],
                 [InlineKeyboardButton(text="Зритель", callback_data=f"set_user_role:{target.id}:viewer")],
+                [InlineKeyboardButton(text="Разжаловать", callback_data=f"unset_user_role:{target.id}")],
                 [InlineKeyboardButton(text="Отмена", callback_data="cancel_flow")],
             ]
         )
@@ -118,6 +120,22 @@ def get_router(ctx: AppContext) -> Router:
             ),
             reply_markup=keyboard,
         )
+
+    @router.callback_query(F.data.startswith("unset_user_role:"))
+    async def unset_user_role(call: CallbackQuery) -> None:
+        """Remove global role from user (разжаловать)."""
+        if not _is_admin(call.from_user.id):
+            await call.answer("Доступ запрещён", show_alert=True)
+            return
+        _, user_id_raw = call.data.split(":", maxsplit=1)
+        user_id = int(user_id_raw)
+        await ctx.roles.clear_global_role(user_id)
+        my_role = await ctx.roles.get_global_role(call.from_user.id)
+        await call.message.answer(
+            f"Роль снята: user_id={user_id}",
+            reply_markup=private_main_menu_inline(role=my_role, is_admin=_is_admin(call.from_user.id)),
+        )
+        await call.answer("Готово")
 
     # ── cancel_flow (universal) ───────────────────────────────────────
     @router.callback_query(F.data == "cancel_flow")
