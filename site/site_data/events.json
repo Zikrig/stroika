@@ -1,0 +1,14 @@
+[
+  {"id": "ev-001", "request_id": "550e8400-e29b-41d4-a716-446655440001", "event_type": "request_created", "actor_user_id": 10, "actor_role": "foreman", "payload_json": {"request_code": "IG-24"}, "created_at": "2026-02-20T10:15:00+00:00"},
+  {"id": "ev-002", "request_id": "550e8400-e29b-41d4-a716-446655440001", "event_type": "pdo_taken", "actor_user_id": 20, "actor_role": "pdo", "payload_json": {}, "created_at": "2026-02-20T11:00:00+00:00"},
+  {"id": "ev-003", "request_id": "550e8400-e29b-41d4-a716-446655440001", "event_type": "pdo_formalized", "actor_user_id": 20, "actor_role": "pdo", "payload_json": {"rows": 1}, "created_at": "2026-02-20T12:00:00+00:00"},
+  {"id": "ev-004", "request_id": "550e8400-e29b-41d4-a716-446655440001", "event_type": "procurement_taken", "actor_user_id": 30, "actor_role": "procurement", "payload_json": {}, "created_at": "2026-02-21T14:00:00+00:00"},
+  {"id": "ev-010", "request_id": "550e8400-e29b-41d4-a716-446655440002", "event_type": "request_created", "actor_user_id": 11, "actor_role": "foreman", "payload_json": {}, "created_at": "2026-02-21T09:00:00+00:00"},
+  {"id": "ev-011", "request_id": "550e8400-e29b-41d4-a716-446655440002", "event_type": "pdo_taken", "actor_user_id": 20, "actor_role": "pdo", "payload_json": {}, "created_at": "2026-02-21T09:30:00+00:00"},
+  {"id": "ev-020", "request_id": "550e8400-e29b-41d4-a716-446655440004", "event_type": "request_created", "actor_user_id": 10, "actor_role": "foreman", "payload_json": {}, "created_at": "2026-02-10T08:30:00+00:00"},
+  {"id": "ev-021", "request_id": "550e8400-e29b-41d4-a716-446655440004", "event_type": "fully_received", "actor_user_id": 10, "actor_role": "foreman", "payload_json": {"remaining_qty": 0}, "created_at": "2026-02-12T16:00:00+00:00"},
+  {"id": "ev-026a", "request_id": "550e8400-e29b-41d4-a716-446655440026", "event_type": "pdo_formalized", "actor_user_id": 20, "actor_role": "pdo", "payload_json": {"mode": "container", "children_count": 2}, "created_at": "2026-02-19T12:00:00+00:00"},
+  {"id": "ev-027", "request_id": "550e8400-e29b-41d4-a716-446655440027", "event_type": "pdo_formalized", "actor_user_id": 20, "actor_role": "pdo", "payload_json": {"source_container": "IG-26"}, "created_at": "2026-02-19T12:05:00+00:00"},
+  {"id": "ev-028", "request_id": "550e8400-e29b-41d4-a716-446655440028", "event_type": "pdo_formalized", "actor_user_id": 20, "actor_role": "pdo", "payload_json": {"source_container": "IG-26"}, "created_at": "2026-02-19T12:05:00+00:00"},
+  {"id": "ev-029", "request_id": "550e8400-e29b-41d4-a716-446655440029", "event_type": "paused", "actor_user_id": 99, "actor_role": "manager", "payload_json": {"reason": "Уточнение объёма"}, "created_at": "2026-02-23T09:00:00+00:00"}
+]

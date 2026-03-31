@@ -1,0 +1,9 @@
+[
+  {"id": 10, "display_name": "Иванов И.И.", "username": "ivanov_foreman", "roles": ["foreman"]},
+  {"id": 11, "display_name": "Сидоров С.С.", "username": "sidorov_foreman", "roles": ["foreman"]},
+  {"id": 20, "display_name": "ПДО Петров", "username": "pdo_petrov", "roles": ["pdo"]},
+  {"id": 30, "display_name": "Закупка Смирнов", "username": "proc_smirnov", "roles": ["procurement"]},
+  {"id": 99, "display_name": "Руководитель Орлов", "username": "manager_orlov", "roles": ["manager"]},
+  {"id": 100, "display_name": "Зритель Наблюдатель", "username": "viewer_demo", "roles": ["viewer"]},
+  {"id": 1, "display_name": "Админ системы", "username": "admin_root", "roles": ["admin", "manager"]}
+]

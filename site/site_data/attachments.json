@@ -1,0 +1,5 @@
+[
+  {"id": "att-001", "request_id": "550e8400-e29b-41d4-a716-446655440001", "event_id": "ev-001", "attachment_type": "photo", "file_name": "photo_site.jpg", "url": "#", "created_at": "2026-02-20T10:16:00+00:00"},
+  {"id": "att-002", "request_id": "550e8400-e29b-41d4-a716-446655440002", "event_id": "ev-010", "attachment_type": "document", "file_name": "spec_bordyur.pdf", "url": "#", "created_at": "2026-02-21T09:01:00+00:00"},
+  {"id": "att-003", "request_id": "550e8400-e29b-41d4-a716-446655440004", "event_id": "ev-020", "attachment_type": "photo", "file_name": "delivery_ig20.jpg", "url": "#", "created_at": "2026-02-10T08:35:00+00:00"}
+]

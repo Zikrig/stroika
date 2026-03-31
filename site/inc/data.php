@@ -6,7 +6,7 @@ declare(strict_types=1);
  */
 function site_load_json(string $name): array
 {
-    $path = dirname(__DIR__) . '/data/' . $name . '.json';
+    $path = dirname(__DIR__) . '/site_data/' . $name . '.json';
     if (!is_readable($path)) {
         return [];
     }
