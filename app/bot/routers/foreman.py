@@ -48,6 +48,30 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     async def _role(user_id: int) -> Role | None:
         return await ctx.roles.get_global_role(user_id)
 
+    async def _replace_private_message(
+        message: Message,
+        text: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> None:
+        """Переиспользуем текущее сообщение в личке вместо создания нового."""
+        try:
+            await message.edit_text(text, reply_markup=reply_markup)
+        except TelegramBadRequest as e:
+            msg = (e.message or "").lower()
+            if "message is not modified" in msg:
+                return
+            if any(
+                part in msg
+                for part in (
+                    "there is no text in the message to edit",
+                    "message can't be edited",
+                    "message to edit not found",
+                )
+            ):
+                await message.answer(text, reply_markup=reply_markup)
+                return
+            raise
+
     def _extract_attachments(message: Message) -> list[dict]:
         attachments: list[dict] = []
         for attr, atype in [
@@ -225,9 +249,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         if not items:
             label = "Архив пуст" if archived else "Активных заявок нет"
-            await message.answer(label, reply_markup=await _menu(user_id))
+            await _replace_private_message(message, label, reply_markup=await _menu(user_id))
             return
-        await message.answer(
+        await _replace_private_message(
+            message,
             "Архив заявок:" if archived else "Активные заявки:",
             reply_markup=request_list_inline(items, page, total, lt),
         )
@@ -256,9 +281,10 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         if not items:
             label = "Архив пуст" if archived else "Активных заявок нет"
-            await message.answer(label, reply_markup=await _menu(user_id))
+            await _replace_private_message(message, label, reply_markup=await _menu(user_id))
             return
-        await message.answer(
+        await _replace_private_message(
+            message,
             "Архив заявок:" if archived else "Активные заявки:",
             reply_markup=request_list_inline(items, page, total, lt, chat_id=chat_id),
         )
@@ -307,7 +333,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     @router.callback_query(F.data == "back_to_menu")
     async def back_to_menu(call: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        await call.message.answer("Главное меню", reply_markup=await _menu(call.from_user.id))
+        await _replace_private_message(call.message, "Главное меню", reply_markup=await _menu(call.from_user.id))
         await call.answer()
 
     @router.callback_query(F.data == "noop")
@@ -321,7 +347,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
     ) -> None:
         request = await ctx.requests.get_request_by_code_global(code)
         if not request:
-            await message.answer("Заявка не найдена", reply_markup=await _menu(user_id))
+            await _replace_private_message(message, "Заявка не найдена", reply_markup=await _menu(user_id))
             return
         from app.bot.formatters.request_card import render_request_card
         events = await ctx.requests.get_events(request["id"])
@@ -338,7 +364,8 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
         )
         role = await _role(user_id)
         repeat_request_id = request["id"] if role == Role.FOREMAN else None
-        await message.answer(
+        await _replace_private_message(
+            message,
             text,
             reply_markup=request_view_inline(
                 request, can_edit, lt, page, chat_id=chat_id, repeat_request_id=repeat_request_id,

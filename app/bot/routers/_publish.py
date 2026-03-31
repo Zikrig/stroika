@@ -400,10 +400,25 @@ async def publish_container_event(
     chat_id: int,
     container: dict,
     child_codes: list[str],
+    source_message_id: int | None = None,
 ) -> int:
     events = await ctx.requests.get_events(container["id"])
     text = render_container_card(container, child_codes)
-    message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=None)
+    message_id = source_message_id
+    if source_message_id is not None:
+        try:
+            await publisher.edit_message(
+                chat_id=chat_id,
+                message_id=source_message_id,
+                text=text,
+                reply_markup=None,
+            )
+        except TelegramBadRequest as e:
+            msg = (e.message or "").lower()
+            if "message is not modified" not in msg:
+                message_id = None
+    if message_id is None:
+        message_id = await publisher.publish(chat_id=chat_id, text=text, reply_markup=None)
     if events:
         await ctx.requests.add_message_link(container["id"], events[-1]["id"], chat_id, message_id)
     await publish_event_reply(

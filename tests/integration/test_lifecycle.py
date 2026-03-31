@@ -97,6 +97,119 @@ async def test_ig27_container_split(tmp_path) -> None:
     assert len(children) == 2
     assert children[0]["request_code"].endswith("-1")
     assert children[1]["request_code"].endswith("-2")
+    updated_parent = await repo.get_request(parent["id"])
+    assert updated_parent is not None
+    assert updated_parent["status_code"] == "closed"
+    assert updated_parent["stage_code"] == StageCode.FULLY_RECEIVED.value
+    assert updated_parent["is_container"] == 1
+    assert updated_parent["remaining_qty"] == 0
+    assert children[0]["parent_request_id"] == parent["id"]
+    assert children[1]["parent_request_id"] == parent["id"]
+
+
+async def test_new_parent_codes_ignore_split_children(tmp_path) -> None:
+    db = Database(str(tmp_path / "test_split_codes.db"))
+    await db.migrate()
+    repo = RequestRepository(db)
+
+    parent_1 = await create_request.execute(
+        repo,
+        CreateRequestInput(
+            chat_id=1,
+            foreman_user_id=10,
+            object_name="Игора",
+            description="Первая",
+            requested_qty=1,
+            unit="шт",
+        ),
+    )
+    children_1 = await pdo_process_excel.execute(
+        repo,
+        parent_1,
+        [
+            {
+                "subobject_name": "A",
+                "name_from_foreman": "Материал A",
+                "nomenclature_1c": "Материал A",
+                "code_1c": "A1",
+                "requested_qty": 10.0,
+                "unit": "шт",
+                "from_stock_qty": 0.0,
+                "to_purchase_qty": 10.0,
+                "need_by": "2026-02-20",
+            },
+            {
+                "subobject_name": "B",
+                "name_from_foreman": "Материал B",
+                "nomenclature_1c": "Материал B",
+                "code_1c": "B1",
+                "requested_qty": 5.0,
+                "unit": "шт",
+                "from_stock_qty": 5.0,
+                "to_purchase_qty": 0.0,
+                "need_by": "2026-02-20",
+            },
+        ],
+        actor_user_id=20,
+    )
+    assert [item["request_code"] for item in children_1] == ["IG-1-1", "IG-1-2"]
+
+    parent_2 = await create_request.execute(
+        repo,
+        CreateRequestInput(
+            chat_id=1,
+            foreman_user_id=10,
+            object_name="Игора",
+            description="Вторая",
+            requested_qty=1,
+            unit="шт",
+        ),
+    )
+    assert parent_2["request_code"] == "IG-2"
+
+    children_2 = await pdo_process_excel.execute(
+        repo,
+        parent_2,
+        [
+            {
+                "subobject_name": "C",
+                "name_from_foreman": "Материал C",
+                "nomenclature_1c": "Материал C",
+                "code_1c": "C1",
+                "requested_qty": 7.0,
+                "unit": "шт",
+                "from_stock_qty": 0.0,
+                "to_purchase_qty": 7.0,
+                "need_by": "2026-02-21",
+            },
+            {
+                "subobject_name": "D",
+                "name_from_foreman": "Материал D",
+                "nomenclature_1c": "Материал D",
+                "code_1c": "D1",
+                "requested_qty": 3.0,
+                "unit": "шт",
+                "from_stock_qty": 1.0,
+                "to_purchase_qty": 2.0,
+                "need_by": "2026-02-21",
+            },
+        ],
+        actor_user_id=20,
+    )
+    assert [item["request_code"] for item in children_2] == ["IG-2-1", "IG-2-2"]
+
+    parent_3 = await create_request.execute(
+        repo,
+        CreateRequestInput(
+            chat_id=1,
+            foreman_user_id=10,
+            object_name="Игора",
+            description="Третья",
+            requested_qty=1,
+            unit="шт",
+        ),
+    )
+    assert parent_3["request_code"] == "IG-3"
 
 
 async def test_paused_request_blocks_non_manager_actions(tmp_path) -> None:

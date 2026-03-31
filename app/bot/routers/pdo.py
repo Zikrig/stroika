@@ -206,6 +206,7 @@ def get_router(ctx: AppContext, publisher: TelegramPublisher) -> Router:
                         await publish_container_event(
                             ctx=ctx, publisher=publisher, chat_id=target_chat_id,
                             container=parent, child_codes=[item["request_code"] for item in created],
+                            source_message_id=source_message_id,
                         )
                 for item in created:
                     await publish_request_event(
